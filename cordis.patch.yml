@@ -1,0 +1,8 @@
+# Composition layer contributed by the dsh-subagent-catalog bundle.
+
+# One client-plane row. Its browser half is discovered from the package.json
+# dsh.client declaration and served as lib/client.js; the node half is an
+# empty apply so the row exists for the Loader.
+- insert:
+    - id: ui-subagent-catalog
+      name: dsh-subagent-catalog

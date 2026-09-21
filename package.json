@@ -1,0 +1,66 @@
+{
+  "name": "dsh-subagent-catalog",
+  "version": "0.1.0",
+  "description": "Session-header subagent catalog for the dsh web client: running children first, each row showing the model and reasoning effort the child actually uses",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "cordis-plugin",
+    "subagent",
+    "ui"
+  ],
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client.js.map",
+    "cordis.patch.yml",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "prepublishOnly": "pnpm run typecheck && pnpm run build && pnpm run test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.2",
+    "typescript": "^5.9.2",
+    "@types/node": "^26.4.1",
+    "@types/react": "~18.3.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@types/react-dom": "~18.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "author": "QuanhuZeYu",
+  "publishConfig": {
+    "access": "public"
+  }
+}
