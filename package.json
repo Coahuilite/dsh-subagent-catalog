@@ -1,7 +1,7 @@
 {
   "name": "dsh-subagent-catalog",
-  "version": "0.1.0",
-  "description": "Session-header subagent catalog for the dsh web client: running children first, each row showing the model and reasoning effort the child actually uses",
+  "version": "0.2.0",
+  "description": "Session-header subagent catalog for the dsh web client: one card per child with its model, context occupancy, decode speed, cache-hit share, tokens, and duration",
   "type": "module",
   "license": "MIT",
   "keywords": [
