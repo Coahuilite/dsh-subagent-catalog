@@ -33,7 +33,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test",
+    "test": "tsdown && node --test",
     "prepublishOnly": "pnpm run typecheck && pnpm run build && pnpm run test"
   },
   "dsh": {
