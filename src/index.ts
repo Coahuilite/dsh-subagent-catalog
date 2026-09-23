@@ -170,6 +170,31 @@ export function apply(ctx: Context): void {
       return allowedRoutesOf(raw)
     }
 
+    /**
+     * Enrich authorized routes with each model's adapter-advertised effort
+     * levels, so the panel never offers a tier its model cannot take. A route
+     * whose metadata lookup fails keeps its pair and simply omits the tiers.
+     * @param routes - authorized provider/model pairs.
+     * @returns one entry per route, in the policy's order.
+     */
+    const describeAllowed = async (routes: readonly AllowedRoute[]): Promise<readonly unknown[]> =>
+      await Promise.all(routes.map(async (route) => {
+        try {
+          const info = await scope.llm.resolveModelInfo(route.provider, route.model)
+          const efforts = info.reasoning?.efforts.map(effort => String(effort.id)) ?? []
+          return {
+            provider: route.provider,
+            model: route.model,
+            ...efforts.length === 0 ? {} : { efforts },
+            ...info.reasoning?.defaultEffort === undefined
+              ? {}
+              : { defaultEffort: String(info.reasoning.defaultEffort) },
+          }
+        } catch {
+          return { provider: route.provider, model: route.model }
+        }
+      }))
+
     scope.effect(() => scope.connection.fetch.register({
       path: ROUTE_PATH,
       methods: ['GET', 'POST'],
@@ -183,6 +208,7 @@ export function apply(ctx: Context): void {
             return failure(400, 'bad-request', 'parentSessionId and childSessionId are required')
           }
           const child = scope.agents.get(childSessionId as SessionId)
+          const allowed = allowedFor(parentSessionId)
           return Response.json({
             ok: true,
             live: child !== undefined,
@@ -191,7 +217,7 @@ export function apply(ctx: Context): void {
               : (currentRouteOf(child.session.requestHeader()?.config) ?? null),
             // null tells the panel the user has not authorized child model
             // selection for this session; the editor must not appear.
-            allowed: allowedFor(parentSessionId) ?? null,
+            allowed: allowed === undefined ? null : await describeAllowed(allowed),
           })
         }
 

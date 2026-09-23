@@ -74,11 +74,14 @@ const STYLES = [
   // instead of drawing a confident zero-length bar.
   '.' + CLS + '-bar[data-unknown=true]{background:repeating-linear-gradient(90deg,var(--dsw-alias-border-l2) 0 6px,transparent 6px 12px)}',
   '.' + CLS + '-barFill{flex:none;height:100%;border-radius:999px;background:var(--dsw-alias-state-business-primary)}',
-  '.' + CLS + '-barFill[data-part=system]{background:var(--dsw-static-neutral-bluish-400)}',
-  // The design platform ships no purple tint token; the composition legend's
-  // tools colour is the same violet literal the context meter uses.
-  '.' + CLS + '-barFill[data-part=tools]{background:rgb(167,139,250)}',
-  '.' + CLS + '-barFill[data-part=messages]{background:var(--dsw-static-blue-450)}',
+  // Occupancy tier colours the fill; composition rides the legend below, which
+  // names system/tools/messages with its own swatches. Tiering the bar therefore
+  // drops no fact, and the printed percentage stays the primary reading, so the
+  // tier reinforces rather than being the only signal. Blue means room, green
+  // means some used, amber means nearly full, red means nearly spent.
+  '.' + CLS + '-bar[data-level=busy] .' + CLS + '-barFill{background:var(--dsw-alias-state-success-primary)}',
+  '.' + CLS + '-bar[data-level=high] .' + CLS + '-barFill{background:var(--dsw-alias-state-warn-primary)}',
+  '.' + CLS + '-bar[data-level=critical] .' + CLS + '-barFill{background:var(--dsw-alias-state-error-primary)}',
   '.' + CLS + '-legend{display:flex;flex-wrap:wrap;gap:2px 10px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
   '.' + CLS + '-legendItem{display:inline-flex;align-items:center;gap:4px;min-width:0}',
   '.' + CLS + '-swatch{flex:none;width:8px;height:8px;border-radius:2px;background:var(--dsw-alias-label-caption)}',
@@ -91,6 +94,29 @@ const STYLES = [
   '.' + CLS + '-metric{display:flex;flex-direction:column;min-width:0}',
   '.' + CLS + '-metricLabel{margin:0;font-size:10px;line-height:14px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.' + CLS + '-metricValue{margin:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+
+  // Route editor: a footer control that stays closed until asked for, because a
+  // card is one open-target button and an edit affordance inside it would be
+  // both invalid markup and an accidental write.
+  '.' + CLS + '-editorBar{display:flex;padding:2px 4px 4px}',
+  '.' + CLS + '-editorOpen{font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}',
+  '.' + CLS + '-editorOpen:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+  '.' + CLS + '-editorOpen:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}',
+  '.' + CLS + '-editor{display:flex;flex-direction:column;gap:6px;margin:2px 4px 4px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px}',
+  '.' + CLS + '-editorHead{display:flex;align-items:baseline;gap:8px}',
+  '.' + CLS + '-editorTitle{flex:1;font-size:12px;line-height:18px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
+  '.' + CLS + '-editorClose{font:inherit;font-size:11px;line-height:16px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}',
+  '.' + CLS + '-editorField{display:flex;flex-direction:column;gap:3px}',
+  '.' + CLS + '-editorLabel{font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption)}',
+  '.' + CLS + '-editorSelect{font:inherit;font-size:12px;line-height:18px;box-sizing:border-box;width:100%;padding:4px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
+  '.' + CLS + '-editorSelect:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}',
+  '.' + CLS + '-editorPreview{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
+  '.' + CLS + '-editorNote{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
+  '.' + CLS + '-editorError{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary)}',
+  '.' + CLS + '-editorOk{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-success-primary)}',
+  '.' + CLS + '-editorApply{font:inherit;font-size:12px;line-height:18px;align-self:flex-start;padding:4px 12px;border:1px solid transparent;border-radius:8px;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer}',
+  '.' + CLS + '-editorApply:disabled{cursor:default;opacity:.5}',
+  '.' + CLS + '-editorApply:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}',
 ].join('')
 
 /**

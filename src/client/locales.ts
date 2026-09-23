@@ -49,6 +49,20 @@ export const zh = {
   'duration.minutes': '{minutes}分{seconds}秒',
   'duration.hours': '{hours}小时{minutes}分{seconds}秒',
   'duration.days': '{days}天{hours}小时',
+  'edit.open': '改路由',
+  'edit.title': '改子代理路由',
+  'edit.close': '关闭',
+  'edit.target': '目标子代理',
+  'edit.provider': '提供方',
+  'edit.model': '模型',
+  'edit.effort': '思考强度',
+  'edit.effort.default': '默认',
+  'edit.preview': '将变为',
+  'edit.confirm': '确认',
+  'edit.loading': '读取中…',
+  'edit.applied': '已提交；该子代理下一轮生效',
+  'edit.noPolicy': '本会话未授权子代理选择模型。该设置只影响新会话，请在 Subagent 设置里开启后新建会话。',
+  'edit.notLive': '该子代理当前不在运行，改路由会被拒绝（不复活冷却的子代理）。',
 } as const
 
 /** English dictionary, key-identical to the Chinese source of truth. */
@@ -97,6 +111,20 @@ export const en: Record<SubagentCatalogKey, string> = {
   'duration.minutes': '{minutes}m {seconds}s',
   'duration.hours': '{hours}h {minutes}m {seconds}s',
   'duration.days': '{days}d {hours}h',
+  'edit.open': 'Change route',
+  'edit.title': 'Change subagent route',
+  'edit.close': 'Close',
+  'edit.target': 'Target subagent',
+  'edit.provider': 'Provider',
+  'edit.model': 'Model',
+  'edit.effort': 'Reasoning effort',
+  'edit.effort.default': 'Default',
+  'edit.preview': 'Will become',
+  'edit.confirm': 'Apply',
+  'edit.loading': 'Reading…',
+  'edit.applied': 'Submitted; takes effect on this subagent’s next turn',
+  'edit.noPolicy': 'This session has not authorized child model selection. The setting only affects new sessions - enable it in Subagent settings and start a new session.',
+  'edit.notLive': 'That subagent is not live, so the change is refused (a cold child is never resumed).',
 }
 
 /** Key domain of the `subagent-catalog` namespace (zh is the source of truth). */

@@ -366,6 +366,34 @@ export function rowContext(row: SubagentRow): RowContext | undefined {
     : { usedTokens, contextWindow, percent: Math.min(100, Math.round(usedTokens / contextWindow * 100)) }
 }
 
+/** Occupancy tiers, in escalation order. */
+export type ContextLevel = 'calm' | 'busy' | 'high' | 'critical'
+
+/**
+ * Tier breakpoints in percent units: calm below 50, busy from 50, high from 75,
+ * critical from 90. The capacity those percentages divide by is whatever the
+ * provider manager reported; this code never second-guesses that number.
+ */
+export const CONTEXT_LEVEL_BREAKS = { busy: 50, high: 75, critical: 90 } as const
+
+/**
+ * Classify one occupancy reading into its tier.
+ *
+ * Structure, not colour, carries the reading: the bar prints its own percentage
+ * and token figures, so the tier reinforces rather than replaces the signal.
+ * The bar stops encoding composition at this point, which loses nothing because
+ * the legend beside it already names system/tools/messages.
+ * @param percent - clamped occupancy percentage, or undefined without capacity.
+ * @returns the tier, or undefined when no capacity scale exists.
+ */
+export function contextLevel(percent: number | undefined): ContextLevel | undefined {
+  if (percent === undefined) return undefined
+  if (percent >= CONTEXT_LEVEL_BREAKS.critical) return 'critical'
+  if (percent >= CONTEXT_LEVEL_BREAKS.high) return 'high'
+  if (percent >= CONTEXT_LEVEL_BREAKS.busy) return 'busy'
+  return 'calm'
+}
+
 /** One card's cache-hit reading over prompt-side billed input. */
 export interface RowCache {
   readonly readTokens: number

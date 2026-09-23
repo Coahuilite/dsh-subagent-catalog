@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildSubagentRows, cachePercentText, formatDurationMs, formatSpeed, formatTokenCount,
+  buildSubagentRows, cachePercentText, contextLevel, formatDurationMs, formatSpeed, formatTokenCount,
   rowAriaSummary, rowBarSegments, rowBreakdownParts, rowCache, rowContext, rowContextText,
   rowDurationMs, rowMetrics, rowModelParts, rowSpeed, rowTotalTokens,
 } from '../lib/dev/rows.js'
@@ -413,4 +413,41 @@ test('reports each metric cell with its label and the absent marker', () => {
   assert.deepEqual(metrics.map(metric => metric.key), ['speed', 'cache', 'total', 'duration', 'steps', 'turns'])
   assert.deepEqual(metrics.map(metric => metric.label), ['速度', '缓存命中', '累计 tokens', '时长', '步数', '轮数'])
   assert.deepEqual(metrics.map(metric => metric.value), ['40 tok/s', '88%', '20k', '12秒', '9', '3'])
+})
+
+test('tiers occupancy at 50, 75, and 90 percent', () => {
+  // Boundaries belong to the higher tier, so a reading exactly at a break reads
+  // as the escalated tier rather than the calm one.
+  assert.equal(contextLevel(0), 'calm')
+  assert.equal(contextLevel(49), 'calm')
+  assert.equal(contextLevel(50), 'busy')
+  assert.equal(contextLevel(74), 'busy')
+  assert.equal(contextLevel(75), 'high')
+  assert.equal(contextLevel(89), 'high')
+  assert.equal(contextLevel(90), 'critical')
+  assert.equal(contextLevel(100), 'critical')
+})
+
+test('states no tier without a capacity scale', () => {
+  // No capacity means no percentage, and an absent reading must not be tiered as
+  // calm: the host never reported the number the tier would claim.
+  assert.equal(contextLevel(undefined), undefined)
+})
+
+test('keeps the tier independent of the clamped bar length', () => {
+  // rowContext clamps the bar at 100 while the token reading keeps the real
+  // size, so the tier has to be a function of the clamped percentage only.
+  const summaries = {
+    [ROOT]: summary(ROOT),
+    child: summary('child', ROOT, {
+      projectionValues: richProjections({
+        contextPressure: { pressureTokens: 200_000, projectedTokens: 200_000, contextWindow: 64_000 },
+      }),
+    }),
+  }
+  const [row] = buildSubagentRows(summaries, ROOT)
+  const context = rowContext(row)
+  assert.equal(context.percent, 100)
+  assert.equal(context.usedTokens, 200_000)
+  assert.equal(contextLevel(context.percent), 'critical')
 })

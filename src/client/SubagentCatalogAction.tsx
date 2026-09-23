@@ -24,9 +24,10 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS } from './locales.ts'
 import {
-  buildSubagentRows, rowAriaSummary, rowBarSegments, rowBreakdownParts, rowContextText, rowMetrics,
-  rowModelParts, type SubagentRow,
+  buildSubagentRows, contextLevel, rowAriaSummary, rowBarSegments, rowBreakdownParts, rowContextText,
+  rowMetrics, rowModelParts, type SubagentRow,
 } from './rows.ts'
+import { RetargetEditor } from './RetargetEditor.tsx'
 import { CLS, MAX_INDENT_DEPTH, MENU_WIDTH } from './styles.ts'
 
 /** One subagent the control opens: the durable direct-parent address. */
@@ -133,6 +134,7 @@ function SubagentCard({ row, t, now, onOpen }: SubagentCardProps) {
         <span
           className={CLS + '-bar'}
           data-unknown={String(percent === undefined)}
+          data-level={contextLevel(percent) ?? 'none'}
           role="img"
           aria-label={context.aria}
         >
@@ -286,6 +288,7 @@ export function SubagentCatalogAction({
           {rows.map(row => (
             <SubagentCard key={row.id} row={row} t={t} now={now} onOpen={openRow} />
           ))}
+          <RetargetEditor rows={rows} parentSessionId={String(sessionId)} t={t} />
         </div>,
         document.body,
       )}
