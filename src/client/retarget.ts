@@ -44,6 +44,12 @@ export interface RetargetState {
    * child has no next turn, so the panel can refuse before offering anything.
    */
   readonly mode: string
+  /**
+   * Whether a queued change would survive a host restart, or undefined when the
+   * host did not say. False is worth stating: a queue that quietly evaporates is
+   * worse than one the user knows is temporary.
+   */
+  readonly durable?: boolean
   /** The route its latest request used, or null before any request. */
   readonly current: RouteReading | null
   /** Authorized routes, or null when this session has no policy. */
@@ -128,6 +134,7 @@ export function retargetStateOf(value: unknown): RetargetState | undefined {
     live: record.live === true,
     queued: record.queued === true,
     mode: textOf(record.mode) ?? 'unknown',
+    ...typeof record.durable === 'boolean' ? { durable: record.durable } : {},
     current: routeReadingOf(record.current),
     allowed: allowedRoutesOf(record.allowed),
   }

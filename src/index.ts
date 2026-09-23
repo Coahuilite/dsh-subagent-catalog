@@ -31,9 +31,17 @@
  *    bypass. Route-change effort handling mirrors `requestedAgentOptions`:
  *    changing the route without naming an effort drops the route-owned effort.
  *
- * Guards: only a **live** direct child of the named parent is accepted. A cold
- * child is refused rather than resumed, matching the upstream policy that
- * addressed subagent sessions expose no independent retargeting contract.
+ * 4. **A child that is not live is queued, never resumed.** The override map is
+ *    itself the queue: it is keyed by child session id and read by the request
+ *    waterfall, so accepting a change for an inactive child needs neither an
+ *    activation nor a log write. The intent is persisted in this plugin's own
+ *    storage domain so it survives a restart, and it is flushed into the child's
+ *    own log once that child is live for its own reasons. A finished one-shot
+ *    child is refused outright — it has no next turn to carry the change.
+ *
+ * Guards: only a direct child of the named parent is accepted, the session's
+ * policy must authorize the route, and the route/effort pair must resolve before
+ * anything is written.
  *
  * @module dsh-subagent-catalog
  */
@@ -41,6 +49,8 @@
 import type { Context } from 'cordis'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { Domain, DomainSpec, KvTable } from '@deepseek-ai/dsh-storage-domain'
+import { z } from 'zod'
 // Type-only: pull the `ctx.sessions` / `ctx.agents` / `ctx.llm` /
 // `ctx.sessionProjections` / `ctx.connection` merges.
 import type {} from '@deepseek-ai/dsh-session'
@@ -55,6 +65,54 @@ const ROUTE_PATH = '/api/subagent-route-override'
 
 /** Projection key carrying the per-session authorized routes (host-only). */
 const POLICY_KEY = 'subagentModelSelectionPolicy'
+
+/**
+ * Storage domain holding retargets queued for a child that is not live.
+ *
+ * The name must match the backend's unit-name rule, `/^[a-z][a-z0-9_]*$/`: a
+ * hyphen is rejected at `open` with `invalid unit name`, and the domain is
+ * identified by this exact string on the medium.
+ */
+const QUEUE_DOMAIN = 'subagent_catalog_retarget'
+
+/** One queued retarget as stored. */
+interface QueuedRecord {
+  /** The session whose policy authorized the change. */
+  readonly parentSessionId: string
+  /** Registered provider route. */
+  readonly provider: string
+  /** Provider-owned model id. */
+  readonly model: string
+  /** Adapter-owned effort, when the user named one. */
+  readonly reasoningEffort?: string
+  /** When the intent was queued, for diagnostics. */
+  readonly queuedAt: number
+}
+
+/**
+ * Validates every stored record at the durable boundary.
+ *
+ * The parent is stored with the route so a restored intent can be re-authorized
+ * against its own session's policy before it is ever applied: a queue entry can
+ * outlive the setting that permitted it.
+ */
+const queueRecordSchema = z.object({
+  parentSessionId: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  reasoningEffort: z.string().optional(),
+  queuedAt: z.number(),
+})
+
+/**
+ * The domain declaration, written as a literal so the storage-domain package
+ * stays type-only and only zod enters the host bundle.
+ */
+const queueSpec = {
+  name: QUEUE_DOMAIN,
+  version: 1,
+  tables: { queued: { valueSchema: queueRecordSchema } },
+} satisfies DomainSpec
 
 /** One authorized provider/model route. */
 interface AllowedRoute {
@@ -152,6 +210,48 @@ export function apply(ctx: Context): void {
    * until the child is live for its own reasons.
    */
   const pendingAppend = new Set<string>()
+  /**
+   * The session that authorized each queued intent, so a restored entry can be
+   * re-authorized against its own session before it is ever applied.
+   */
+  const queueParents = new Map<string, string>()
+  /**
+   * The durable copy of the queue, present only when the profile mounts a
+   * storage domain. Absent, every behaviour is unchanged except that the queue
+   * does not survive a restart.
+   */
+  let queueTable: KvTable<string, QueuedRecord> | undefined
+  /**
+   * Why the durable queue is unavailable, when it is. Reported through the GET
+   * response: the panel states it, and a profile whose storage is unreachable
+   * says so instead of silently keeping the queue in memory.
+   */
+  let storageError: string | undefined
+
+  /** Persist one queued intent. A failure costs durability, never the change. */
+  const persistQueued = (childSessionId: string, record: QueuedRecord): void => {
+    const table = queueTable
+    if (table === undefined) return
+    void table.put(childSessionId, record).catch((error: unknown) => {
+      ctx.logger.warn(`subagent-catalog: could not persist the queued retarget for ${childSessionId}: ${String(error)}`)
+    })
+  }
+
+  /**
+   * Drop the queue's record of one intent, leaving the in-memory override in
+   * place: a live Agent's selection cache was hydrated at setup and never
+   * re-reads the projection, so the override is what holds the chosen route.
+   * @param childSessionId - the child whose queue entry is finished or cancelled.
+   */
+  const forgetQueued = (childSessionId: string): void => {
+    pendingAppend.delete(childSessionId)
+    queueParents.delete(childSessionId)
+    const table = queueTable
+    if (table === undefined) return
+    void table.delete(childSessionId).catch((error: unknown) => {
+      ctx.logger.warn(`subagent-catalog: could not drop the queued retarget for ${childSessionId}: ${String(error)}`)
+    })
+  }
 
   // Outermost: `await next()` yields the value every later listener produced,
   // including `installModelSelection`, so this override is the last write.
@@ -173,31 +273,45 @@ export function apply(ctx: Context): void {
     }
   }, { prepend: true }), 'subagent-catalog: retarget override')
 
-  // A queued retarget becomes durable the moment its child is live again. The
-  // append belongs here rather than inside the request waterfall: `agent/status`
-  // is an ordinary transition, so no append can reenter one already publishing.
-  ctx.effect(() => ctx.on('agent/status', (payload) => {
-    const id = String(payload.agent.id)
-    if (!pendingAppend.has(id)) return
-    const route = overrides.get(id)
-    if (route === undefined) {
-      pendingAppend.delete(id)
-      return
-    }
-    try {
-      payload.agent.session.append('model/selection', {
-        provider: route.provider,
-        model: route.model,
-        ...route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort as never },
+  // The durable half of the queue. The maps above are what the request path
+  // consults; this table is what survives a restart, and an entry leaves it only
+  // once it has reached the child's own log (or was cancelled), so any one intent
+  // has exactly one durable copy.
+  ctx.inject(['storageDomain'], (storageScope) => {
+    storageScope.effect(() => {
+      let opened: Domain<typeof queueSpec> | undefined
+      let disposed = false
+      void storageScope.storageDomain.open(queueSpec).then((domain) => {
+        // A dispose that raced this open still owns the handle it never saw.
+        if (disposed) { void domain.close(); return }
+        opened = domain
+        const table = domain.table('queued')
+        queueTable = table
+        for (const [childSessionId, record] of table.entries()) {
+          overrides.set(childSessionId, {
+            provider: record.provider,
+            model: record.model,
+            ...record.reasoningEffort === undefined ? {} : { reasoningEffort: record.reasoningEffort },
+          })
+          pendingAppend.add(childSessionId)
+          queueParents.set(childSessionId, record.parentSessionId)
+        }
+        if (table.size > 0) {
+          ctx.logger.info(`subagent-catalog: restored ${table.size} queued retarget(s)`)
+        }
+      }).catch((error: unknown) => {
+        // Storage is an upgrade, not a requirement: without it the queue is
+        // in-memory only and every other behaviour is unchanged.
+        storageError = error instanceof Error && error.message !== '' ? error.message : String(error)
+        ctx.logger.warn(`subagent-catalog: the retarget queue is not durable: ${storageError}`)
       })
-      pendingAppend.delete(id)
-      ctx.logger.info(`subagent-catalog: queued retarget for ${id} is now durable`)
-    } catch (error: unknown) {
-      // The live override still applies on the next request; durability is
-      // retried on the next status transition rather than dropped.
-      ctx.logger.warn(`subagent-catalog: could not persist queued retarget for ${id}: ${String(error)}`)
-    }
-  }), 'subagent-catalog: queue durability')
+      return () => {
+        disposed = true
+        queueTable = undefined
+        if (opened !== undefined) void opened.close()
+      }
+    })
+  })
 
   ctx.inject(['connection', 'sessions', 'agents', 'llm', 'subagents', 'sessionProjections'], (scope) => {
     /** Authorized routes for one parent session, or undefined when not authorized. */
@@ -207,6 +321,67 @@ export function apply(ctx: Context): void {
       const raw = scope.sessionProjections.stateOf(parent, POLICY_KEY as never) as unknown
       return allowedRoutesOf(raw)
     }
+
+    // A queued retarget becomes durable the moment its child is live again. Two
+    // deliberate choices: the listener sits on the ROOT context, because a scoped
+    // listener would see only its own plane's agents (the same reason the request
+    // override does), while the services it re-validates against come from this
+    // inject scope; and the append happens here rather than inside the request
+    // waterfall, because `agent/status` is an ordinary transition and no append
+    // can reenter one already publishing.
+    ctx.effect(() => ctx.on('agent/status', (payload) => {
+      const id = String(payload.agent.id)
+      if (!pendingAppend.has(id)) return
+      void (async () => {
+        const route = overrides.get(id)
+        if (route === undefined) {
+          forgetQueued(id)
+          return
+        }
+        // A restored intent is re-authorized only when its session is reachable
+        // to ask. The policy lives in the parent's projection, and the projection
+        // registry only answers for an ATTACHED session, so a parent that is cold
+        // right now cannot be consulted - and dropping the intent for that reason
+        // would erase exactly the restart that the queue exists to survive. The
+        // intent was authorized when it was queued, so it stands until its
+        // session is attached and says otherwise.
+        const parentSessionId = queueParents.get(id)
+        const parentAttached = parentSessionId !== undefined
+          && scope.sessions.get(parentSessionId as SessionId) !== undefined
+        if (parentAttached && allowedFor(parentSessionId) === undefined) {
+          ctx.logger.info(`subagent-catalog: dropping the queued retarget for ${id}; its session is no longer authorized`)
+          overrides.delete(id)
+          forgetQueued(id)
+          return
+        }
+        if (!parentAttached && parentSessionId !== undefined) {
+          ctx.logger.info(`subagent-catalog: applying the queued retarget for ${id} without re-authorizing; its session is not attached`)
+        }
+        try {
+          const config = await scope.llm.resolveCallConfig({
+            provider: route.provider,
+            model: route.model,
+            ...route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort as never },
+          })
+          payload.agent.session.append('model/selection', {
+            provider: config.provider,
+            model: config.model,
+            ...config.reasoningEffort === undefined
+              ? {}
+              : { reasoningEffort: String(config.reasoningEffort) as never },
+          })
+          // The in-memory override STAYS: a live Agent's selection cache was
+          // hydrated at setup and does not re-read the projection, so the override
+          // is what keeps this child on the chosen route for its remaining turns.
+          forgetQueued(id)
+          ctx.logger.info(`subagent-catalog: queued retarget for ${id} is now durable`)
+        } catch (error: unknown) {
+          // The live override still applies on the next request; durability is
+          // retried on the next status transition rather than dropped.
+          ctx.logger.warn(`subagent-catalog: could not persist the queued retarget for ${id}: ${String(error)}`)
+        }
+      })()
+    }), 'subagent-catalog: queue durability')
 
     /**
      * Enrich authorized routes with each model's adapter-advertised effort
@@ -259,11 +434,23 @@ export function apply(ctx: Context): void {
             // panel permissive, and the write path re-checks it anyway.
             mode = undefined
           }
+          const live = child !== undefined
+          const terminal = !live && mode === 'one-shot'
+          // A queued intent that a restart restored for a child which has since
+          // finished is unkeepable, so the reading drops it rather than showing a
+          // promise nothing can fulfil.
+          if (terminal && pendingAppend.has(childSessionId)) {
+            overrides.delete(childSessionId)
+            forgetQueued(childSessionId)
+          }
           return Response.json({
             ok: true,
-            live: child !== undefined,
+            live,
             queued: pendingAppend.has(childSessionId),
             mode: typeof mode === 'string' ? mode : 'unknown',
+            // Whether a queued change would survive a restart, and why not.
+            durable: queueTable !== undefined,
+            ...storageError === undefined ? {} : { storageError },
             current: child === undefined
               ? null
               : (currentRouteOf(child.session.requestHeader()?.config) ?? null),
@@ -310,7 +497,7 @@ export function apply(ctx: Context): void {
         // names no route and the setting was turned off since.
         if (textOf(body.action) === 'cancel') {
           overrides.delete(childSessionId)
-          pendingAppend.delete(childSessionId)
+          forgetQueued(childSessionId)
           return Response.json({ ok: true, childSessionId, cancelled: true })
         }
 
@@ -377,6 +564,14 @@ export function apply(ctx: Context): void {
           }
           overrides.set(childSessionId, resolved)
           pendingAppend.add(childSessionId)
+          queueParents.set(childSessionId, parentSessionId)
+          persistQueued(childSessionId, {
+            parentSessionId,
+            provider: resolved.provider,
+            model: resolved.model,
+            ...resolved.reasoningEffort === undefined ? {} : { reasoningEffort: resolved.reasoningEffort },
+            queuedAt: Date.now(),
+          })
           ctx.logger.info(
             `subagent-catalog: queued retarget for ${childSessionId} to ${resolved.provider}/${resolved.model}`,
           )
@@ -394,9 +589,11 @@ export function apply(ctx: Context): void {
           const message = error instanceof Error && error.message !== '' ? error.message : String(error)
           return failure(500, 'append-failed', message)
         }
-        // Live effect: the running child's next request.
+        // Live effect: the running child's next request. `forgetQueued` clears
+        // any queue entry this child may still carry, so a live write leaves no
+        // stale durable copy behind.
         overrides.set(childSessionId, resolved)
-        pendingAppend.delete(childSessionId)
+        forgetQueued(childSessionId)
 
         ctx.logger.info(
           `subagent-catalog: retargeted ${childSessionId} to ${resolved.provider}/${resolved.model}`

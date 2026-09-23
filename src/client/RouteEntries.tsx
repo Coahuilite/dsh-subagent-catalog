@@ -179,6 +179,12 @@ function EntryStatus({ current, t, onCancel }: {
       {verdict === 'terminal' && <span className={CLS + '-pickerError'}>{t('pick.terminal')}</span>}
       {verdict === 'live' && <span className={CLS + '-pickerNote'}>{t('pick.willApply')}</span>}
       {verdict === 'queued' && <span className={CLS + '-pickerNote'}>{t('pick.willQueue')}</span>}
+      {/* A queued change is only worth promising if it survives a restart; when
+          the host has no storage the panel says so rather than letting the queue
+          evaporate silently. */}
+      {verdict === 'queued' && current.state?.durable === false && (
+        <span className={CLS + '-pickerError'}>{t('pick.notDurable')}</span>
+      )}
       {current.receipt === 'applied' && <span className={CLS + '-pickerOk'}>{t('edit.applied')}</span>}
       {current.receipt === 'queued' && <span className={CLS + '-pickerOk'}>{t('pick.queued')}</span>}
       {/* A queued intent is always removable, including after the session's

@@ -48,13 +48,14 @@
     "@deepseek-ai/cordis": "*"
   },
   "devDependencies": {
-    "tsdown": "^0.22.2",
-    "typescript": "^5.9.2",
     "@types/node": "^26.4.1",
     "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@types/react-dom": "~18.3.0"
+    "tsdown": "^0.22.2",
+    "typescript": "^5.9.2",
+    "zod": "4.4.3"
   },
   "engines": {
     "node": ">=20"

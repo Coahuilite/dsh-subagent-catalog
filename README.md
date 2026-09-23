@@ -79,6 +79,17 @@ dsh plugin --profile web add dsh-subagent-catalog
 
 模式取自官方目录 `subagents.listChildren` 的返回值——本插件已经为地址校验取了它，不额外开销。
 
+**排队存在插件自己的存储域里，跨重启存活。** 队列项写入本插件的存储域 `subagent_catalog_retarget`（表 `queued`：键＝子代理会话 id，值＝父会话 id、路由、档位、入队时间），宿主启动时装载回内存覆盖表：
+
+- 记录里带着**父会话 id**，是为了在应用之前还能拿它去问一次策略；
+- 应用（或取消）之后该记录立刻删除，因此**任何一个意图在磁盘上只有一份**；
+- 存储域不可用时（profile 没有挂载 `storageDomain`）队列退化为内存态：此时读取接口的 `durable` 为 false，面板会明确写出"重启会丢掉这条排队"，而不是让队列无声蒸发。
+
+两个**只有真跑起来才会撞到**的约束，记在这里免得后人重踩：
+
+- 域名必须匹配后端的单元名规则 `^[a-z][a-z0-9_]*$`，**连字符会被 `open` 拒绝**（`invalid unit name`）——类型检查完全看不出来。
+- 策略投影只在会话**已挂载**时才能被读到，所以"应用前重新授权"只能在父会话挂着时进行；父会话是冷的时候就跳过重新授权（该意图在入队时就已被授权）。否则宿主重启会恰好抹掉这个队列存在的唯一理由。
+
 **拒绝条件**（都会返回可读原因，不会静默）：
 
 - 目标不是该父会话的**直接**子代理（判定用官方 `subagents.listChildren`）；
@@ -93,12 +104,13 @@ dsh plugin --profile web add dsh-subagent-catalog
 - 一份 dsh 构建，其 web profile 暴露 `conversation.session.header.actions` 槽位、共享客户端原语（`@deepseek-ai/dsh-client-ui-primitives`），以及 `tokenUsage`、`contextPressure`、`contextBreakdown`、`sessionStats`、`subagentTiming` 投影。缺少其中任何一项时，该卡片对应的指标显示为缺失，而不是直接报错。
 - 浏览器侧从 shell 的模块表解析 `react`、`react-dom` 和这些原语；运行时不需要其他依赖。
 - 宿主侧需要 `connection`（鉴权载体）、`agents`、`sessions`、`subagents`、`llm`、`sessionProjections`。这些在 `ctx.inject` 内按需挂载：缺少时该行照常挂载，只是**改路由端点不存在**，卡片仍可正常显示与打开子代理。
+- 可选：`storageDomain`（队列的持久化载体）。缺少时队列只在内存中，端点、面板与写入语义全部照旧。
 
 ## 已知限制
 
 - 子代理目录的**树形展开、在侧边栏打开、切换器**由官方 `@deepseek-ai/dsh-client-ui-subagent` 提供（0.1.7 起它自己就在会话头渲染 lineage 树）。官方那个座位占用 `conversation.session.header.lineage`，那是 `single` 槽位且已被占据，树外插件无法再加一个 occupant；本插件的座位 id 因此是 `dsh-subagent-catalog`，与官方的 `subagent-catalog` 并存于 `actions` 列表。
 - 一次性子代理只有在**活着**的时候才能改路由（它跑完即终态，此时会被明确拒绝，理由见上）。
-- 排队表是**内存态**：宿主重启会丢掉尚未生效的排队项（子代理若从未再次活动，它的日志里本来也没有任何写入，因此不会留下半生效状态）。要做成跨重启持久需要另加一层存储。
+- 排队表由本插件的存储域承载，跨重启存活；若 profile 未挂载 `storageDomain`，它会退化为内存态并在面板上标明（`durable: false`），此时重启会丢掉尚未生效的排队项——子代理若从未再次活动，它的日志里本来也没有任何写入，因此不会留下半生效状态。
 - 档位断点（50/75/90）目前是代码常量；要做成可配需要给宿主半区加一个 Config schema。
 - 模型条目与强度条目位于 `role="menu"` 面板内的卡片上，菜单语义与"卡片内的按钮"并不完全契合，属已知的无障碍瑕疵。
 - 一次性子代理的持久描述符里没有模型字段，所以模型信息完全依赖 `modelSelection` 投影，在该投影到达客户端之前显示为未记录。
