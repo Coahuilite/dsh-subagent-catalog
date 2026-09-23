@@ -1,43 +1,74 @@
 /**
  * dsh-subagent-catalog, node half.
  *
- * The browser half is a pure projection reader (session-header control). This
- * half adds the ONE write the panel cannot express through existing Host RPCs:
- * retargeting a **live** subagent's next request to a different provider/model/
- * effort.
+ * The browser half is a projection reader (session-header control). This half
+ * adds the one write the panel cannot express through existing Host RPCs:
+ * retargeting a **live** subagent's next request to a different
+ * provider/model/effort, without the global-default side effect of
+ * `session.selectModel`.
  *
- * Why a dedicated write exists at all: `session.selectModel` is the only
- * browser-reachable primitive that writes a model selection, and it also calls
- * `agentDefaultModel.saveSelection`, which rewrites the global default for every
- * future session. Retargeting one child must not do that.
+ * Three decisions shape it:
  *
- * The write itself is one durable event on the child's own session log
- * (`model/selection`). The `modelSelection` projection folds it into `pending`,
- * the child's next request header consumes it, and the live Agent's selection
- * cache picks it up through `selectionFor` — the same path `selectModel` uses,
- * minus the global default write.
+ * 1. **The write is a request-waterfall override, not a session event.**
+ *    A live Agent's selection cache is hydrated from the `modelSelection`
+ *    projection exactly once, at agent setup, and is otherwise written only by
+ *    the internal `AgentCatalog.selectForNextRequest`. Appending a
+ *    `model/selection` event therefore does NOT retarget a running child. The
+ *    public `agent/request` waterfall returns the final `LlmCallConfig`, and a
+ *    `prepend` listener post-processes `next()`, so an override here wins over
+ *    `installModelSelection` without touching core.
  *
- * Deliberately narrow, matching the upstream policy that addressed subagent
- * sessions expose no independent model-retargeting contract: only a **live**
- * direct child of the named parent is accepted. A cold child is refused instead
- * of resumed, because writing to it would activate persisted child history
- * outside the direct-parent continuation seam.
+ * 2. **The durable event is still appended.** The override map is in-memory, so
+ *    a child that cold-resumes later hydrates its selection cache from the
+ *    projection instead — the appended event is what makes the retarget survive
+ *    a restart, and what the panel reads back as `next`.
+ *
+ * 3. **The official policy authorizes the retarget.** The shipped
+ *    `subagent-model-selection` setting records a per-session allowed-route list
+ *    (projection `subagentModelSelectionPolicy`, host-only, never sent to the
+ *    browser). No policy means the user has not authorized child model
+ *    selection, so this endpoint refuses instead of becoming an authorization
+ *    bypass. Route-change effort handling mirrors `requestedAgentOptions`:
+ *    changing the route without naming an effort drops the route-owned effort.
+ *
+ * Guards: only a **live** direct child of the named parent is accepted. A cold
+ * child is refused rather than resumed, matching the upstream policy that
+ * addressed subagent sessions expose no independent retargeting contract.
  *
  * @module dsh-subagent-catalog
  */
 
 import type { Context } from 'cordis'
+import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-// Type-only: pull the `ctx.sessions` / `ctx.agents` / `ctx.llm` / `ctx.connection` merges.
+// Type-only: pull the `ctx.sessions` / `ctx.agents` / `ctx.llm` /
+// `ctx.sessionProjections` / `ctx.connection` merges.
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-client-connection'
 
 /** Exact Fetch route owned by this plugin, below the shared `/api` channel. */
 const ROUTE_PATH = '/api/subagent-route-override'
 
-/** One accepted retarget request. */
+/** Projection key carrying the per-session authorized routes (host-only). */
+const POLICY_KEY = 'subagentModelSelectionPolicy'
+
+/** One authorized provider/model route. */
+interface AllowedRoute {
+  readonly provider: string
+  readonly model: string
+}
+
+/** One resolved retarget. */
+interface ResolvedRoute {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+/** One retarget request body. */
 interface RouteOverrideRequest {
   /** Durable parent (the session hosting the panel). */
   readonly parentSessionId?: unknown
@@ -47,7 +78,7 @@ interface RouteOverrideRequest {
   readonly provider?: unknown
   /** Provider-owned model id. */
   readonly model?: unknown
-  /** Adapter-owned effort, or omitted to use the selected model's default tier. */
+  /** Adapter-owned effort; omitted keeps it only when the route is unchanged. */
   readonly reasoningEffort?: unknown
 }
 
@@ -68,20 +99,101 @@ function failure(status: number, code: string, message: string): Response {
 }
 
 /**
- * Host plugin body: register the authenticated retarget route.
+ * Narrow one raw policy projection value to authorized routes.
+ * @param raw - projection state read for the parent session.
+ * @returns routes when the setting authorized model selection, else undefined.
+ */
+function allowedRoutesOf(raw: unknown): readonly AllowedRoute[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const routes: AllowedRoute[] = []
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) return undefined
+    const provider = textOf((entry as Record<string, unknown>).provider)
+    const model = textOf((entry as Record<string, unknown>).model)
+    if (provider === undefined || model === undefined) return undefined
+    routes.push({ provider, model })
+  }
+  return routes.length === 0 ? undefined : routes
+}
+
+/** Current route of one child, read from its durable request header. */
+function currentRouteOf(header: LlmCallConfig | undefined): ResolvedRoute | undefined {
+  if (header === undefined) return undefined
+  return {
+    provider: header.provider,
+    model: header.model,
+    ...header.reasoningEffort === undefined ? {} : { reasoningEffort: String(header.reasoningEffort) },
+  }
+}
+
+/**
+ * Host plugin body: the authenticated retarget route plus its request override.
  *
- * The registration is nested in `ctx.inject` so the row still mounts in a
- * profile without the connection carrier (the browser half is served from the
- * package either way); the route simply does not exist there.
+ * The override listener sits on the root context — `agent/request` is a scoped
+ * event, and a root-plane listener receives every agent's request, which the
+ * shipped `agent-loop` tests rely on by filtering `payload.agent`. The route
+ * registration is nested in `ctx.inject` so the row still mounts in a profile
+ * without the connection carrier; the route simply does not exist there.
  * @param ctx - host root context.
  */
 export function apply(ctx: Context): void {
-  ctx.inject(['connection', 'sessions', 'agents', 'llm'], (scope) => {
+  /** Live retargets, keyed by child session id. */
+  const overrides = new Map<string, ResolvedRoute>()
+
+  // Outermost: `await next()` yields the value every later listener produced,
+  // including `installModelSelection`, so this override is the last write.
+  ctx.effect(() => ctx.on('agent/request', async (payload, next): Promise<LlmCallConfig> => {
+    const resolved = await next()
+    const override = overrides.get(String(payload.agent.id))
+    if (override === undefined) return resolved
+    // Rebuild rather than spread: an inherited effort must not survive a route
+    // change, exactly as `requestedAgentOptions` clears route-owned effort.
+    return {
+      provider: override.provider,
+      model: override.model,
+      ...override.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: override.reasoningEffort as never },
+      ...resolved.temperature === undefined ? {} : { temperature: resolved.temperature },
+      ...resolved.maxTokens === undefined ? {} : { maxTokens: resolved.maxTokens },
+      ...resolved.stop === undefined ? {} : { stop: resolved.stop },
+    }
+  }, { prepend: true }), 'subagent-catalog: retarget override')
+
+  ctx.inject(['connection', 'sessions', 'agents', 'llm', 'sessionProjections'], (scope) => {
+    /** Authorized routes for one parent session, or undefined when not authorized. */
+    const allowedFor = (parentSessionId: string): readonly AllowedRoute[] | undefined => {
+      const parent = scope.sessions.get(parentSessionId as SessionId)
+      if (parent === undefined) return undefined
+      const raw = scope.sessionProjections.stateOf(parent, POLICY_KEY as never) as unknown
+      return allowedRoutesOf(raw)
+    }
+
     scope.effect(() => scope.connection.fetch.register({
       path: ROUTE_PATH,
-      methods: ['POST'],
+      methods: ['GET', 'POST'],
       requestBody: 'buffered',
       fetch: async (request) => {
+        const url = new URL(request.url)
+        if (request.method === 'GET') {
+          const parentSessionId = textOf(url.searchParams.get('parentSessionId'))
+          const childSessionId = textOf(url.searchParams.get('childSessionId'))
+          if (parentSessionId === undefined || childSessionId === undefined) {
+            return failure(400, 'bad-request', 'parentSessionId and childSessionId are required')
+          }
+          const child = scope.sessions.get(childSessionId as SessionId)
+          const live = scope.agents.get(childSessionId as SessionId) !== undefined
+          const allowed = allowedFor(parentSessionId)
+          return Response.json({
+            ok: true,
+            live,
+            current: currentRouteOf(child?.requestHeader()?.config) ?? null,
+            // null tells the panel the user has not authorized child model
+            // selection for this session; the editor must not appear.
+            allowed: allowed === undefined ? null : allowed,
+          })
+        }
+
         let body: RouteOverrideRequest
         try {
           body = await request.json() as RouteOverrideRequest
@@ -93,7 +205,7 @@ export function apply(ctx: Context): void {
         const childSessionId = textOf(body.childSessionId)
         const provider = textOf(body.provider)
         const model = textOf(body.model)
-        const reasoningEffort = textOf(body.reasoningEffort)
+        const requestedEffort = textOf(body.reasoningEffort)
         if (parentSessionId === undefined || childSessionId === undefined) {
           return failure(400, 'bad-request', 'parentSessionId and childSessionId are required')
         }
@@ -109,19 +221,34 @@ export function apply(ctx: Context): void {
         if (child.header.origin !== 'subagent' || String(child.header.parentSession ?? '') !== parentSessionId) {
           return failure(403, 'not-a-direct-child', `session "${childSessionId}" is not a direct child of "${parentSessionId}"`)
         }
-        // Liveness check: never resume/activate a cold child to retarget it.
+        // Liveness check: never resume a cold child to retarget it.
         if (scope.agents.get(childSessionId as SessionId) === undefined) {
           return failure(409, 'child-not-live', `session "${childSessionId}" has no live agent; retargeting a cold child is refused`)
         }
+        // Authorization: the user's own setting gates this endpoint.
+        const allowed = allowedFor(parentSessionId)
+        if (allowed === undefined) {
+          return failure(403, 'not-authorized', 'this session has no subagent model-selection policy; enable it in Subagent settings (new sessions only)')
+        }
+        if (!allowed.some(route => route.provider === provider && route.model === model)) {
+          return failure(403, 'route-not-allowed', `route "${provider}/${model}" is not authorized for this session`)
+        }
 
-        // Validate the exact route/effort combination before writing, so an
-        // illegal pair fails here instead of at the child's next request.
-        let resolved: { provider: string; model: string; reasoningEffort?: string }
+        // Route change drops the route-owned effort unless one is named.
+        const current = currentRouteOf(child.requestHeader()?.config)
+        const routeChanged = current === undefined
+          || current.provider !== provider
+          || current.model !== model
+        const effectiveEffort = requestedEffort ?? (routeChanged ? undefined : current?.reasoningEffort)
+
+        // Validate the exact combination before writing, so an illegal pair
+        // fails here instead of at the child's next request.
+        let resolved: ResolvedRoute
         try {
           const config = await scope.llm.resolveCallConfig({
             provider,
             model,
-            ...reasoningEffort === undefined ? {} : { reasoningEffort: reasoningEffort as never },
+            ...effectiveEffort === undefined ? {} : { reasoningEffort: effectiveEffort as never },
           })
           resolved = {
             provider: config.provider,
@@ -133,6 +260,7 @@ export function apply(ctx: Context): void {
           return failure(422, 'route-unavailable', message)
         }
 
+        // Durable record: a later cold resume hydrates from this event.
         try {
           child.append('model/selection', {
             provider: resolved.provider,
@@ -143,12 +271,14 @@ export function apply(ctx: Context): void {
           const message = error instanceof Error && error.message !== '' ? error.message : String(error)
           return failure(500, 'append-failed', message)
         }
+        // Live effect: the running child's next request.
+        overrides.set(childSessionId, resolved)
 
         ctx.logger.info(
           `subagent-catalog: retargeted ${childSessionId} to ${resolved.provider}/${resolved.model}`
           + (resolved.reasoningEffort === undefined ? '' : ` (${resolved.reasoningEffort})`),
         )
-        return Response.json({ ok: true, childSessionId, selected: resolved })
+        return Response.json({ ok: true, childSessionId, selected: resolved, allowed })
       },
     }), 'subagent-catalog: route override')
   })

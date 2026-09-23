@@ -69,6 +69,9 @@
       "@deepseek-ai/dsh-client-connection": [
         "../../deepseek-harness/packages/client/connection/lib/types/index.d.ts"
       ],
+      "@deepseek-ai/dsh-session-projection": [
+        "../../deepseek-harness/packages/session/session-projection/lib/types/index.d.ts"
+      ],
       "@deepseek-ai/dsh-subagent": [
         "../../deepseek-harness/packages/subagent/subagent/lib/types/index.d.ts"
       ],
