@@ -283,14 +283,15 @@ export function apply(ctx: Context): void {
         // children, and it answers whether or not the child still holds a live
         // Agent. `sessions.get` is NOT usable here — a subagent session is not
         // attached to the top-level session registry.
-        let children: readonly { readonly id: SessionId }[]
+        let children: readonly { readonly id: SessionId; readonly mode?: unknown }[]
         try {
           children = await scope.subagents.listChildren(parentSessionId as SessionId)
         } catch (error: unknown) {
           const message = error instanceof Error && error.message !== '' ? error.message : String(error)
           return failure(500, 'listing-failed', message)
         }
-        if (!children.some(entry => String(entry.id) === childSessionId)) {
+        const target = children.find(entry => String(entry.id) === childSessionId)
+        if (target === undefined) {
           return failure(403, 'not-a-direct-child', `session "${childSessionId}" is not a direct child of "${parentSessionId}"`)
         }
 
@@ -353,6 +354,17 @@ export function apply(ctx: Context): void {
         // this child next makes a request, and the durable record follows at its
         // next status transition.
         if (child === undefined) {
+          // A finished one-shot child is terminal: nothing will ever consume a
+          // queued override, so accepting one would promise a next turn that
+          // cannot come. The catalog already told us the mode; refusing here is
+          // what keeps every accepted retarget a promise we can keep.
+          if (target.mode === 'one-shot') {
+            return failure(
+              409,
+              'terminal-one-shot',
+              `session "${childSessionId}" is a finished one-shot child; it has no next turn to retarget`,
+            )
+          }
           overrides.set(childSessionId, resolved)
           pendingAppend.add(childSessionId)
           ctx.logger.info(

@@ -41,6 +41,8 @@ interface EntryProps {
 interface EntryState {
   readonly loading: boolean
   readonly state?: RetargetState
+  /** Stable failure code, so a known refusal can be stated in the UI's language. */
+  readonly errorCode?: string
   readonly error?: string
   /** How the last accepted write landed, for the receipt. */
   readonly receipt?: 'applied' | 'queued'
@@ -49,6 +51,11 @@ interface EntryState {
 
 /** The initial, not-yet-fetched entry state. */
 const IDLE: EntryState = { loading: false, busy: false }
+
+/** Failure codes the panel states itself instead of echoing the host's English. */
+const LOCALE_CODES: Readonly<Record<string, Parameters<TranslateNS<typeof NS>>[0]>> = {
+  'terminal-one-shot': 'pick.terminal',
+}
 
 /**
  * Read the child's authorized routes on demand, and write through them.
@@ -62,14 +69,14 @@ function useRouteEntry(row: SubagentRow) {
   const [current, setCurrent] = useState<EntryState>(IDLE)
 
   const load = useCallback(async (): Promise<void> => {
-    setCurrent(previous => ({ ...previous, loading: true, error: undefined }))
+    setCurrent(previous => ({ ...previous, loading: true, errorCode: undefined, error: undefined }))
     const result = await readRetargetState(parentSessionId, childSessionId)
     setCurrent(previous => ({
       ...previous,
       loading: false,
       ...result.ok
-        ? { state: result.value, error: undefined }
-        : { state: undefined, error: result.message },
+        ? { state: result.value, errorCode: undefined, error: undefined }
+        : { state: undefined, errorCode: result.code, error: result.message },
     }))
   }, [parentSessionId, childSessionId])
 
@@ -83,10 +90,10 @@ function useRouteEntry(row: SubagentRow) {
   const apply = useCallback(async (
     selection: { provider: string; model: string; reasoningEffort?: string },
   ): Promise<void> => {
-    setCurrent(previous => ({ ...previous, busy: true, receipt: undefined, error: undefined }))
+    setCurrent(previous => ({ ...previous, busy: true, receipt: undefined, errorCode: undefined, error: undefined }))
     const result = await applyRetarget(parentSessionId, childSessionId, selection)
     if (!result.ok) {
-      setCurrent(previous => ({ ...previous, busy: false, error: result.code + ': ' + result.message }))
+      setCurrent(previous => ({ ...previous, busy: false, errorCode: result.code, error: result.message }))
       return
     }
     // Re-read so the open list reflects the host's state rather than the
@@ -100,10 +107,10 @@ function useRouteEntry(row: SubagentRow) {
   }, [parentSessionId, childSessionId, load])
 
   const cancel = useCallback(async (): Promise<void> => {
-    setCurrent(previous => ({ ...previous, busy: true, receipt: undefined, error: undefined }))
+    setCurrent(previous => ({ ...previous, busy: true, receipt: undefined, errorCode: undefined, error: undefined }))
     const result = await cancelRetarget(parentSessionId, childSessionId)
     if (!result.ok) {
-      setCurrent(previous => ({ ...previous, busy: false, error: result.code + ': ' + result.message }))
+      setCurrent(previous => ({ ...previous, busy: false, errorCode: result.code, error: result.message }))
       return
     }
     setCurrent(previous => ({ ...previous, busy: false }))
@@ -124,9 +131,14 @@ function EntryStatus({ current, t, onCancel }: {
   t: TranslateNS<typeof NS>
   onCancel: () => void
 }) {
+  const localized = current.errorCode === undefined ? undefined : LOCALE_CODES[current.errorCode]
   return (
     <>
-      {current.error !== undefined && <span className={CLS + '-pickerError'}>{current.error}</span>}
+      {current.error !== undefined && (
+        <span className={CLS + '-pickerError'}>
+          {localized === undefined ? current.errorCode + ': ' + current.error : t(localized)}
+        </span>
+      )}
       {current.receipt === 'applied' && <span className={CLS + '-pickerOk'}>{t('edit.applied')}</span>}
       {current.receipt === 'queued' && <span className={CLS + '-pickerOk'}>{t('pick.queued')}</span>}
       {/* A queued intent is always removable, including after the session's
