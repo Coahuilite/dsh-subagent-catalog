@@ -47,6 +47,7 @@ import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-client-connection'
 
 /** Exact Fetch route owned by this plugin, below the shared `/api` channel. */
@@ -160,7 +161,7 @@ export function apply(ctx: Context): void {
     }
   }, { prepend: true }), 'subagent-catalog: retarget override')
 
-  ctx.inject(['connection', 'sessions', 'agents', 'llm', 'sessionProjections'], (scope) => {
+  ctx.inject(['connection', 'sessions', 'agents', 'llm', 'subagents', 'sessionProjections'], (scope) => {
     /** Authorized routes for one parent session, or undefined when not authorized. */
     const allowedFor = (parentSessionId: string): readonly AllowedRoute[] | undefined => {
       const parent = scope.sessions.get(parentSessionId as SessionId)
@@ -181,16 +182,16 @@ export function apply(ctx: Context): void {
           if (parentSessionId === undefined || childSessionId === undefined) {
             return failure(400, 'bad-request', 'parentSessionId and childSessionId are required')
           }
-          const child = scope.sessions.get(childSessionId as SessionId)
-          const live = scope.agents.get(childSessionId as SessionId) !== undefined
-          const allowed = allowedFor(parentSessionId)
+          const child = scope.agents.get(childSessionId as SessionId)
           return Response.json({
             ok: true,
-            live,
-            current: currentRouteOf(child?.requestHeader()?.config) ?? null,
+            live: child !== undefined,
+            current: child === undefined
+              ? null
+              : (currentRouteOf(child.session.requestHeader()?.config) ?? null),
             // null tells the panel the user has not authorized child model
             // selection for this session; the editor must not appear.
-            allowed: allowed === undefined ? null : allowed,
+            allowed: allowedFor(parentSessionId) ?? null,
           })
         }
 
@@ -213,16 +214,24 @@ export function apply(ctx: Context): void {
           return failure(400, 'bad-request', 'provider and model are required')
         }
 
-        const child = scope.sessions.get(childSessionId as SessionId)
-        if (child === undefined) {
-          return failure(404, 'session-not-found', `no session "${childSessionId}"`)
+        // Address check: the official catalog is the authority on direct
+        // children, and it answers whether or not the child still holds a live
+        // Agent. `sessions.get` is NOT usable here — a subagent session is not
+        // attached to the top-level session registry.
+        let children: readonly { readonly id: SessionId }[]
+        try {
+          children = await scope.subagents.listChildren(parentSessionId as SessionId)
+        } catch (error: unknown) {
+          const message = error instanceof Error && error.message !== '' ? error.message : String(error)
+          return failure(500, 'listing-failed', message)
         }
-        // Address check: exactly this parent, exactly one level down.
-        if (child.header.origin !== 'subagent' || String(child.header.parentSession ?? '') !== parentSessionId) {
+        if (!children.some(entry => String(entry.id) === childSessionId)) {
           return failure(403, 'not-a-direct-child', `session "${childSessionId}" is not a direct child of "${parentSessionId}"`)
         }
-        // Liveness check: never resume a cold child to retarget it.
-        if (scope.agents.get(childSessionId as SessionId) === undefined) {
+        // Liveness check: never resume a cold child to retarget it. The child's
+        // session is reached through its live Agent for the same reason.
+        const child = scope.agents.get(childSessionId as SessionId)
+        if (child === undefined) {
           return failure(409, 'child-not-live', `session "${childSessionId}" has no live agent; retargeting a cold child is refused`)
         }
         // Authorization: the user's own setting gates this endpoint.
@@ -235,7 +244,7 @@ export function apply(ctx: Context): void {
         }
 
         // Route change drops the route-owned effort unless one is named.
-        const current = currentRouteOf(child.requestHeader()?.config)
+        const current = currentRouteOf(child.session.requestHeader()?.config)
         const routeChanged = current === undefined
           || current.provider !== provider
           || current.model !== model
@@ -262,7 +271,7 @@ export function apply(ctx: Context): void {
 
         // Durable record: a later cold resume hydrates from this event.
         try {
-          child.append('model/selection', {
+          child.session.append('model/selection', {
             provider: resolved.provider,
             model: resolved.model,
             ...resolved.reasoningEffort === undefined ? {} : { reasoningEffort: resolved.reasoningEffort as never },
