@@ -125,12 +125,48 @@ function PickerList({ children }: { children: ReactNode }) {
   return <span className={CLS + '-picker'}>{children}</span>
 }
 
-/** Receipt, error, and the queue's own cancellation, shared by both entries. */
+/**
+ * What the list must state before the user picks, derived from the host's
+ * reading rather than discovered by a failed attempt.
+ */
+type Verdict =
+  /** The session's policy does not authorize child model selection. */
+  | 'unavailable'
+  /** A finished one-shot child: no next turn exists to carry the change. */
+  | 'terminal'
+  /** Live: the change lands on the next request. */
+  | 'live'
+  /** Not live but continuable: the change is queued. */
+  | 'queued'
+  /** Not read yet. */
+  | 'unknown'
+
+/**
+ * Classify one host reading into the verdict the list states.
+ * @param state - the host's reading, or undefined before it arrives.
+ * @returns the verdict.
+ */
+function verdictOf(state: RetargetState | undefined): Verdict {
+  if (state === undefined) return 'unknown'
+  if (state.allowed === null) return 'unavailable'
+  if (state.live) return 'live'
+  return state.mode === 'one-shot' ? 'terminal' : 'queued'
+}
+
+/**
+ * The verdict line, plus the queue's own cancellation.
+ *
+ * Only the two states that can actually take the change render options; the
+ * other two state their refusal instead of offering a choice that cannot work.
+ * @param props - the reading, the translator, and the cancel handler.
+ * @returns the status fragment.
+ */
 function EntryStatus({ current, t, onCancel }: {
   current: EntryState
   t: TranslateNS<typeof NS>
   onCancel: () => void
 }) {
+  const verdict = verdictOf(current.state)
   const localized = current.errorCode === undefined ? undefined : LOCALE_CODES[current.errorCode]
   return (
     <>
@@ -139,6 +175,10 @@ function EntryStatus({ current, t, onCancel }: {
           {localized === undefined ? current.errorCode + ': ' + current.error : t(localized)}
         </span>
       )}
+      {verdict === 'unavailable' && <span className={CLS + '-pickerNote'}>{t('edit.noPolicy')}</span>}
+      {verdict === 'terminal' && <span className={CLS + '-pickerError'}>{t('pick.terminal')}</span>}
+      {verdict === 'live' && <span className={CLS + '-pickerNote'}>{t('pick.willApply')}</span>}
+      {verdict === 'queued' && <span className={CLS + '-pickerNote'}>{t('pick.willQueue')}</span>}
       {current.receipt === 'applied' && <span className={CLS + '-pickerOk'}>{t('edit.applied')}</span>}
       {current.receipt === 'queued' && <span className={CLS + '-pickerOk'}>{t('pick.queued')}</span>}
       {/* A queued intent is always removable, including after the session's
@@ -157,6 +197,11 @@ function EntryStatus({ current, t, onCancel }: {
   )
 }
 
+/** Whether a verdict can carry a change at all. */
+function offersOptions(verdict: Verdict): boolean {
+  return verdict === 'live' || verdict === 'queued'
+}
+
 /**
  * The provider/model entry: shows the route in use and lists the authorized
  * routes. Picking one omits the effort deliberately, so the host applies its own
@@ -169,7 +214,7 @@ export function ModelEntry({ row, t }: EntryProps) {
   const parts = row.model
   if (parts === undefined) return null
   const routes = current.state?.allowed ?? undefined
-  const blocked = current.state !== undefined && current.state.allowed === null
+  const verdict = verdictOf(current.state)
 
   return (
     <span className={CLS + '-entry'}>
@@ -186,9 +231,8 @@ export function ModelEntry({ row, t }: EntryProps) {
       {open && (
         <PickerList>
           {current.loading && <span className={CLS + '-pickerNote'}>{t('edit.loading')}</span>}
-          {blocked && <span className={CLS + '-pickerNote'}>{t('edit.noPolicy')}</span>}
           <EntryStatus current={current} t={t} onCancel={() => { void cancel() }} />
-          {routes?.map(route => (
+          {offersOptions(verdict) && routes?.map(route => (
             <button
               key={route.provider + '/' + route.model}
               type="button"
@@ -225,6 +269,7 @@ export function EffortEntry({ row, t }: EntryProps) {
   )
   const efforts = route?.efforts ?? []
   const loaded = current.state !== undefined
+  const verdict = verdictOf(current.state)
 
   return (
     <span className={CLS + '-entry'}>
@@ -244,10 +289,10 @@ export function EffortEntry({ row, t }: EntryProps) {
           <EntryStatus current={current} t={t} onCancel={() => { void cancel() }} />
           {/* A model that advertises no tiers has nothing to choose, so the list
               states that instead of rendering an empty box. */}
-          {loaded && efforts.length === 0 && (
+          {offersOptions(verdict) && loaded && efforts.length === 0 && (
             <span className={CLS + '-pickerNote'}>{t('pick.none')}</span>
           )}
-          {efforts.map(effort => (
+          {offersOptions(verdict) && efforts.map(effort => (
             <button
               key={effort}
               type="button"

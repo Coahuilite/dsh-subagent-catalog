@@ -247,13 +247,23 @@ export function apply(ctx: Context): void {
           }
           const child = scope.agents.get(childSessionId as SessionId)
           const allowed = allowedFor(parentSessionId)
+          // The mode is what lets the panel state the verdict BEFORE a pick
+          // rather than only after a refusal: a finished one-shot child has no
+          // next turn, so its list must not offer routes at all.
+          let mode: unknown
+          try {
+            const siblings = await scope.subagents.listChildren(parentSessionId as SessionId)
+            mode = siblings.find(entry => String(entry.id) === childSessionId)?.mode
+          } catch {
+            // Listing is only needed for the verdict; an absent mode leaves the
+            // panel permissive, and the write path re-checks it anyway.
+            mode = undefined
+          }
           return Response.json({
             ok: true,
             live: child !== undefined,
-            // A queued retarget has not reached the child's own log yet, so the
-            // panel can say "applies on the next turn" instead of implying it
-            // already happened.
             queued: pendingAppend.has(childSessionId),
+            mode: typeof mode === 'string' ? mode : 'unknown',
             current: child === undefined
               ? null
               : (currentRouteOf(child.session.requestHeader()?.config) ?? null),

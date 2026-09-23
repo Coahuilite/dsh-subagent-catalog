@@ -39,6 +39,11 @@ export interface RetargetState {
   readonly live: boolean
   /** Whether a retarget is queued and not yet written to the child's own log. */
   readonly queued: boolean
+  /**
+   * The child's lifecycle mode from the official catalog: a finished one-shot
+   * child has no next turn, so the panel can refuse before offering anything.
+   */
+  readonly mode: string
   /** The route its latest request used, or null before any request. */
   readonly current: RouteReading | null
   /** Authorized routes, or null when this session has no policy. */
@@ -122,6 +127,7 @@ export function retargetStateOf(value: unknown): RetargetState | undefined {
   return {
     live: record.live === true,
     queued: record.queued === true,
+    mode: textOf(record.mode) ?? 'unknown',
     current: routeReadingOf(record.current),
     allowed: allowedRoutesOf(record.allowed),
   }
