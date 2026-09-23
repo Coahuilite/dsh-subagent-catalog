@@ -52,11 +52,12 @@ export const zh = {
   'pick.model': '改模型',
   'pick.effort': '改思考强度',
   'pick.none': '该模型没有可调思考强度',
+  'pick.queued': '已排队：该子代理下次活动时生效',
+  'pick.cancel': '取消排队',
   'edit.effort.default': '默认',
   'edit.loading': '读取中…',
   'edit.applied': '已提交；该子代理下一轮生效',
   'edit.noPolicy': '本会话未授权子代理选择模型。该设置只影响新会话，请在 Subagent 设置里开启后新建会话。',
-  'edit.notLive': '该子代理当前不在运行，改路由会被拒绝（不复活冷却的子代理）。',
 } as const
 
 /** English dictionary, key-identical to the Chinese source of truth. */
@@ -108,11 +109,12 @@ export const en: Record<SubagentCatalogKey, string> = {
   'pick.model': 'Change model',
   'pick.effort': 'Change reasoning effort',
   'pick.none': 'This model advertises no reasoning tiers',
+  'pick.queued': 'Queued: applies when this subagent is next active',
+  'pick.cancel': 'Cancel the queued change',
   'edit.effort.default': 'Default',
   'edit.loading': 'Reading…',
   'edit.applied': 'Submitted; takes effect on this subagent’s next turn',
   'edit.noPolicy': 'This session has not authorized child model selection. The setting only affects new sessions - enable it in Subagent settings and start a new session.',
-  'edit.notLive': 'That subagent is not live, so the change is refused (a cold child is never resumed).',
 }
 
 /** Key domain of the `subagent-catalog` namespace (zh is the source of truth). */

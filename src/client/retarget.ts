@@ -35,8 +35,10 @@ export interface RouteReading {
 
 /** Everything the editor needs about one child. */
 export interface RetargetState {
-  /** Whether the child currently holds a live Agent; a cold child is refused. */
+  /** Whether the child currently holds a live Agent. */
   readonly live: boolean
+  /** Whether a retarget is queued and not yet written to the child's own log. */
+  readonly queued: boolean
   /** The route its latest request used, or null before any request. */
   readonly current: RouteReading | null
   /** Authorized routes, or null when this session has no policy. */
@@ -119,6 +121,7 @@ export function retargetStateOf(value: unknown): RetargetState | undefined {
   if (record.ok !== true) return undefined
   return {
     live: record.live === true,
+    queued: record.queued === true,
     current: routeReadingOf(record.current),
     allowed: allowedRoutesOf(record.allowed),
   }
@@ -160,18 +163,33 @@ export async function readRetargetState(
     : { ok: true, value: state }
 }
 
+/** One accepted retarget and how it landed. */
+export interface RetargetAccepted {
+  /** The route the host resolved and accepted. */
+  readonly selected: RouteReading
+  /**
+   * True when the child was not live, so the request is queued and applies on
+   * its next activity instead of having already been written to its log.
+   */
+  readonly queued: boolean
+}
+
 /**
- * Ask the host to retarget one live child.
+ * Ask the host to retarget one child.
+ *
+ * A child that is not live is accepted and queued rather than refused: the
+ * override applies whenever that child next makes a request, and the durable
+ * record follows when it is live again. Nothing is resumed either way.
  * @param parentSessionId - session hosting the panel.
  * @param childSessionId - direct child to retarget.
  * @param selection - provider, model, and optional effort.
- * @returns the accepted route, or a failure code and message.
+ * @returns the accepted route and whether it is merely queued, or a failure.
  */
 export async function applyRetarget(
   parentSessionId: string,
   childSessionId: string,
   selection: RouteSelection,
-): Promise<RetargetOutcome<RouteReading>> {
+): Promise<RetargetOutcome<RetargetAccepted>> {
   let response: Response
   try {
     response = await fetch(ROUTE, {
@@ -194,5 +212,33 @@ export async function applyRetarget(
   const selected = routeReadingOf(record.selected)
   return selected === null
     ? { ok: false, code: 'bad-response', message: 'unrecognized selection response' }
-    : { ok: true, value: selected }
+    : { ok: true, value: { selected, queued: record.queued === true } }
+}
+
+/**
+ * Drop a queued retarget.
+ *
+ * Cancelling does not need the policy or a live child: an intent the user
+ * queued must stay removable even if the setting was turned off since.
+ * @param parentSessionId - session hosting the panel.
+ * @param childSessionId - direct child whose queue entry to drop.
+ * @returns fulfillment, or a failure code and message.
+ */
+export async function cancelRetarget(
+  parentSessionId: string,
+  childSessionId: string,
+): Promise<RetargetOutcome<true>> {
+  let response: Response
+  try {
+    response = await fetch(ROUTE, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ parentSessionId, childSessionId, action: 'cancel' }),
+    })
+  } catch (error: unknown) {
+    return { ok: false, code: 'network', message: error instanceof Error ? error.message : String(error) }
+  }
+  const body: unknown = await response.json().catch(() => undefined)
+  if (!response.ok) return { ok: false, ...failureOf(body, `HTTP ${String(response.status)}`) }
+  return { ok: true, value: true }
 }

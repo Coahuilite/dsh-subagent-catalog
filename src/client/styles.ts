@@ -108,6 +108,9 @@ const STYLES = [
   '.' + CLS + '-entryButton{font:inherit;font-size:11px;line-height:16px;max-width:100%;box-sizing:border-box;padding:1px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.' + CLS + '-entryButton:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
   '.' + CLS + '-entryButton:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}',
+  // A queued retarget is a promise, not a fact: the dashed amber border says so
+  // without colour being the only signal.
+  '.' + CLS + '-entryButton[data-queued=true]{border-style:dashed;border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-label-primary)}',
   // The list floats above the neighbouring cards; the panel already scrolls, so
   // the list is positioned rather than flowed to avoid reflowing every metric.
   '.' + CLS + '-picker{position:absolute;z-index:2;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:2px;min-width:190px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',

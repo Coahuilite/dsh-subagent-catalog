@@ -3,18 +3,19 @@
  *
  * The model badge and the effort badge are the controls: clicking either opens
  * its own inline list of what the host authorizes, and picking one applies the
- * change. There is no separate form and no confirmation step, because the
- * choice itself is the deliberate act and the list only ever contains options
- * the session's policy already allows.
+ * change. There is no separate form and no confirmation step, because the choice
+ * itself is the deliberate act and the list only ever contains options the
+ * session's policy already allows.
  *
- * A card cannot be a `<button>` and hold these, since interactive content
- * inside a button is invalid; the card is a focusable row whose open-target is
- * the card itself, and these entries stop propagation so a pick never also
- * opens the child.
+ * A card cannot be a `<button>` and hold these, since interactive content inside
+ * a button is invalid; the card is a focusable row whose open-target is the card
+ * itself, and these entries stop propagation so a pick never also opens the child.
  *
- * The official `subagent-model-selection` policy gates everything. Nothing is
- * fetched until an entry is first opened, and a session without a policy, or a
- * child with no live Agent, gets an explanation instead of a list.
+ * Three states the list must be honest about:
+ * - a session with no policy gets an explanation, never a list;
+ * - a child that is not live is ACCEPTED and queued, so the receipt says the
+ *   change applies on its next activity rather than implying it already landed;
+ * - an empty tier list means the model advertises none, and says so.
  *
  * @module dsh-subagent-catalog/RouteEntries
  */
@@ -22,8 +23,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SubagentRow } from './rows.ts'
-import type { NS } from './locales.ts'
-import { applyRetarget, readRetargetState, type RetargetState } from './retarget.ts'
+import { NS } from './locales.ts'
+import {
+  applyRetarget, cancelRetarget, readRetargetState, type RetargetState,
+} from './retarget.ts'
 import { CLS } from './styles.ts'
 
 /** Shared props for one card's route entries. */
@@ -39,7 +42,8 @@ interface EntryState {
   readonly loading: boolean
   readonly state?: RetargetState
   readonly error?: string
-  readonly note?: string
+  /** How the last accepted write landed, for the receipt. */
+  readonly receipt?: 'applied' | 'queued'
   readonly busy: boolean
 }
 
@@ -47,9 +51,9 @@ interface EntryState {
 const IDLE: EntryState = { loading: false, busy: false }
 
 /**
- * Read the child's authorized routes on demand.
+ * Read the child's authorized routes on demand, and write through them.
  * @param row - the card being edited.
- * @returns the current state plus a loader and an apply helper.
+ * @returns the open flag, current state, and the apply/cancel operations.
  */
 function useRouteEntry(row: SubagentRow) {
   const parentSessionId = String(row.parentId)
@@ -79,24 +83,66 @@ function useRouteEntry(row: SubagentRow) {
   const apply = useCallback(async (
     selection: { provider: string; model: string; reasoningEffort?: string },
   ): Promise<void> => {
-    setCurrent(previous => ({ ...previous, busy: true, note: undefined, error: undefined }))
+    setCurrent(previous => ({ ...previous, busy: true, receipt: undefined, error: undefined }))
     const result = await applyRetarget(parentSessionId, childSessionId, selection)
     if (!result.ok) {
       setCurrent(previous => ({ ...previous, busy: false, error: result.code + ': ' + result.message }))
       return
     }
-    // Re-read so the open list reflects the host's new state rather than the
+    // Re-read so the open list reflects the host's state rather than the
     // optimism of the click.
-    setCurrent(previous => ({ ...previous, busy: false, note: selection.provider + '/' + selection.model }))
+    setCurrent(previous => ({
+      ...previous,
+      busy: false,
+      receipt: result.value.queued ? 'queued' : 'applied',
+    }))
     await load()
   }, [parentSessionId, childSessionId, load])
 
-  return { open, setOpen, current, apply }
+  const cancel = useCallback(async (): Promise<void> => {
+    setCurrent(previous => ({ ...previous, busy: true, receipt: undefined, error: undefined }))
+    const result = await cancelRetarget(parentSessionId, childSessionId)
+    if (!result.ok) {
+      setCurrent(previous => ({ ...previous, busy: false, error: result.code + ': ' + result.message }))
+      return
+    }
+    setCurrent(previous => ({ ...previous, busy: false }))
+    await load()
+  }, [parentSessionId, childSessionId, load])
+
+  return { open, setOpen, current, apply, cancel }
 }
 
-/** The shared inline list shell. */
+/** The inline list shell. */
 function PickerList({ children }: { children: ReactNode }) {
   return <span className={CLS + '-picker'}>{children}</span>
+}
+
+/** Receipt, error, and the queue's own cancellation, shared by both entries. */
+function EntryStatus({ current, t, onCancel }: {
+  current: EntryState
+  t: TranslateNS<typeof NS>
+  onCancel: () => void
+}) {
+  return (
+    <>
+      {current.error !== undefined && <span className={CLS + '-pickerError'}>{current.error}</span>}
+      {current.receipt === 'applied' && <span className={CLS + '-pickerOk'}>{t('edit.applied')}</span>}
+      {current.receipt === 'queued' && <span className={CLS + '-pickerOk'}>{t('pick.queued')}</span>}
+      {/* A queued intent is always removable, including after the session's
+          policy was turned off, so this does not depend on the list's options. */}
+      {current.state?.queued === true && (
+        <button
+          type="button"
+          className={CLS + '-pickerOption'}
+          disabled={current.busy}
+          onClick={(event) => { event.stopPropagation(); onCancel() }}
+        >
+          {t('pick.cancel')}
+        </button>
+      )}
+    </>
+  )
 }
 
 /**
@@ -104,15 +150,14 @@ function PickerList({ children }: { children: ReactNode }) {
  * routes. Picking one omits the effort deliberately, so the host applies its own
  * rule (a route change clears the route-owned tier, the same route keeps it).
  * @param props - the card and the translator.
- * @returns the entry, or nothing when the card has no recorded route.
+ * @returns the entry, or nothing when the card records no route.
  */
 export function ModelEntry({ row, t }: EntryProps) {
-  const { open, setOpen, current, apply } = useRouteEntry(row)
+  const { open, setOpen, current, apply, cancel } = useRouteEntry(row)
   const parts = row.model
   if (parts === undefined) return null
   const routes = current.state?.allowed ?? undefined
   const blocked = current.state !== undefined && current.state.allowed === null
-  const notLive = current.state !== undefined && current.state.allowed !== null && !current.state.live
 
   return (
     <span className={CLS + '-entry'}>
@@ -120,6 +165,7 @@ export function ModelEntry({ row, t }: EntryProps) {
         type="button"
         className={CLS + '-entryButton'}
         aria-expanded={open}
+        data-queued={String(current.state?.queued === true)}
         aria-label={t('pick.model') + ': ' + parts.provider + '/' + parts.model}
         onClick={(event) => { event.stopPropagation(); setOpen(!open) }}
       >
@@ -128,10 +174,8 @@ export function ModelEntry({ row, t }: EntryProps) {
       {open && (
         <PickerList>
           {current.loading && <span className={CLS + '-pickerNote'}>{t('edit.loading')}</span>}
-          {current.error !== undefined && <span className={CLS + '-pickerError'}>{current.error}</span>}
           {blocked && <span className={CLS + '-pickerNote'}>{t('edit.noPolicy')}</span>}
-          {notLive && <span className={CLS + '-pickerNote'}>{t('edit.notLive')}</span>}
-          {current.note !== undefined && <span className={CLS + '-pickerOk'}>{t('edit.applied')}</span>}
+          <EntryStatus current={current} t={t} onCancel={() => { void cancel() }} />
           {routes?.map(route => (
             <button
               key={route.provider + '/' + route.model}
@@ -161,7 +205,7 @@ export function ModelEntry({ row, t }: EntryProps) {
  * @returns the entry, or nothing when the card records no route.
  */
 export function EffortEntry({ row, t }: EntryProps) {
-  const { open, setOpen, current, apply } = useRouteEntry(row)
+  const { open, setOpen, current, apply, cancel } = useRouteEntry(row)
   const parts = row.model
   if (parts === undefined) return null
   const route = (current.state?.allowed ?? []).find(
@@ -176,6 +220,7 @@ export function EffortEntry({ row, t }: EntryProps) {
         type="button"
         className={CLS + '-entryButton'}
         aria-expanded={open}
+        data-queued={String(current.state?.queued === true)}
         aria-label={t('pick.effort')}
         onClick={(event) => { event.stopPropagation(); setOpen(!open) }}
       >
@@ -184,8 +229,7 @@ export function EffortEntry({ row, t }: EntryProps) {
       {open && (
         <PickerList>
           {current.loading && <span className={CLS + '-pickerNote'}>{t('edit.loading')}</span>}
-          {current.error !== undefined && <span className={CLS + '-pickerError'}>{current.error}</span>}
-          {current.note !== undefined && <span className={CLS + '-pickerOk'}>{t('edit.applied')}</span>}
+          <EntryStatus current={current} t={t} onCancel={() => { void cancel() }} />
           {/* A model that advertises no tiers has nothing to choose, so the list
               states that instead of rendering an empty box. */}
           {loaded && efforts.length === 0 && (

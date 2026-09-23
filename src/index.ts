@@ -81,6 +81,8 @@ interface RouteOverrideRequest {
   readonly model?: unknown
   /** Adapter-owned effort; omitted keeps it only when the route is unchanged. */
   readonly reasoningEffort?: unknown
+  /** `cancel` drops a queued retarget; anything else applies one. */
+  readonly action?: unknown
 }
 
 /** One non-empty string field, or undefined. */
@@ -138,8 +140,18 @@ function currentRouteOf(header: LlmCallConfig | undefined): ResolvedRoute | unde
  * @param ctx - host root context.
  */
 export function apply(ctx: Context): void {
-  /** Live retargets, keyed by child session id. */
+  /** Retargets to apply on a child's next request, keyed by child session id. */
   const overrides = new Map<string, ResolvedRoute>()
+  /**
+   * Children whose retarget is queued but not yet written to their own log.
+   *
+   * This IS the queue: an override applies whenever that child next makes a
+   * request, so accepting a request for a child that is not live right now needs
+   * nothing but this map. A cold child's log cannot be appended to without
+   * resuming it, which the upstream policy forbids, so the durable record waits
+   * until the child is live for its own reasons.
+   */
+  const pendingAppend = new Set<string>()
 
   // Outermost: `await next()` yields the value every later listener produced,
   // including `installModelSelection`, so this override is the last write.
@@ -160,6 +172,32 @@ export function apply(ctx: Context): void {
       ...resolved.stop === undefined ? {} : { stop: resolved.stop },
     }
   }, { prepend: true }), 'subagent-catalog: retarget override')
+
+  // A queued retarget becomes durable the moment its child is live again. The
+  // append belongs here rather than inside the request waterfall: `agent/status`
+  // is an ordinary transition, so no append can reenter one already publishing.
+  ctx.effect(() => ctx.on('agent/status', (payload) => {
+    const id = String(payload.agent.id)
+    if (!pendingAppend.has(id)) return
+    const route = overrides.get(id)
+    if (route === undefined) {
+      pendingAppend.delete(id)
+      return
+    }
+    try {
+      payload.agent.session.append('model/selection', {
+        provider: route.provider,
+        model: route.model,
+        ...route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort as never },
+      })
+      pendingAppend.delete(id)
+      ctx.logger.info(`subagent-catalog: queued retarget for ${id} is now durable`)
+    } catch (error: unknown) {
+      // The live override still applies on the next request; durability is
+      // retried on the next status transition rather than dropped.
+      ctx.logger.warn(`subagent-catalog: could not persist queued retarget for ${id}: ${String(error)}`)
+    }
+  }), 'subagent-catalog: queue durability')
 
   ctx.inject(['connection', 'sessions', 'agents', 'llm', 'subagents', 'sessionProjections'], (scope) => {
     /** Authorized routes for one parent session, or undefined when not authorized. */
@@ -212,6 +250,10 @@ export function apply(ctx: Context): void {
           return Response.json({
             ok: true,
             live: child !== undefined,
+            // A queued retarget has not reached the child's own log yet, so the
+            // panel can say "applies on the next turn" instead of implying it
+            // already happened.
+            queued: pendingAppend.has(childSessionId),
             current: child === undefined
               ? null
               : (currentRouteOf(child.session.requestHeader()?.config) ?? null),
@@ -236,9 +278,6 @@ export function apply(ctx: Context): void {
         if (parentSessionId === undefined || childSessionId === undefined) {
           return failure(400, 'bad-request', 'parentSessionId and childSessionId are required')
         }
-        if (provider === undefined || model === undefined) {
-          return failure(400, 'bad-request', 'provider and model are required')
-        }
 
         // Address check: the official catalog is the authority on direct
         // children, and it answers whether or not the child still holds a live
@@ -254,12 +293,22 @@ export function apply(ctx: Context): void {
         if (!children.some(entry => String(entry.id) === childSessionId)) {
           return failure(403, 'not-a-direct-child', `session "${childSessionId}" is not a direct child of "${parentSessionId}"`)
         }
-        // Liveness check: never resume a cold child to retarget it. The child's
-        // session is reached through its live Agent for the same reason.
-        const child = scope.agents.get(childSessionId as SessionId)
-        if (child === undefined) {
-          return failure(409, 'child-not-live', `session "${childSessionId}" has no live agent; retargeting a cold child is refused`)
+
+        // Cancelling is deliberately checked before the route requirement and the
+        // policy gate: a queued intent must stay removable even when the caller
+        // names no route and the setting was turned off since.
+        if (textOf(body.action) === 'cancel') {
+          overrides.delete(childSessionId)
+          pendingAppend.delete(childSessionId)
+          return Response.json({ ok: true, childSessionId, cancelled: true })
         }
+
+        if (provider === undefined || model === undefined) {
+          return failure(400, 'bad-request', 'provider and model are required')
+        }
+
+        // Liveness decides HOW the retarget lands, not whether it is accepted.
+        const child = scope.agents.get(childSessionId as SessionId)
         // Authorization: the user's own setting gates this endpoint.
         const allowed = allowedFor(parentSessionId)
         if (allowed === undefined) {
@@ -269,8 +318,13 @@ export function apply(ctx: Context): void {
           return failure(403, 'route-not-allowed', `route "${provider}/${model}" is not authorized for this session`)
         }
 
-        // Route change drops the route-owned effort unless one is named.
-        const current = currentRouteOf(child.session.requestHeader()?.config)
+        // Route change drops the route-owned effort unless one is named. A cold
+        // child has no last request header to compare against, so a queued
+        // retarget carries only what the caller named and otherwise lets the
+        // model's own default apply.
+        const current = child === undefined
+          ? undefined
+          : currentRouteOf(child.session.requestHeader()?.config)
         const routeChanged = current === undefined
           || current.provider !== provider
           || current.model !== model
@@ -295,6 +349,18 @@ export function apply(ctx: Context): void {
           return failure(422, 'route-unavailable', message)
         }
 
+        // Queued: no log write and no resume. The override applies the moment
+        // this child next makes a request, and the durable record follows at its
+        // next status transition.
+        if (child === undefined) {
+          overrides.set(childSessionId, resolved)
+          pendingAppend.add(childSessionId)
+          ctx.logger.info(
+            `subagent-catalog: queued retarget for ${childSessionId} to ${resolved.provider}/${resolved.model}`,
+          )
+          return Response.json({ ok: true, childSessionId, selected: resolved, queued: true })
+        }
+
         // Durable record: a later cold resume hydrates from this event.
         try {
           child.session.append('model/selection', {
@@ -308,12 +374,13 @@ export function apply(ctx: Context): void {
         }
         // Live effect: the running child's next request.
         overrides.set(childSessionId, resolved)
+        pendingAppend.delete(childSessionId)
 
         ctx.logger.info(
           `subagent-catalog: retargeted ${childSessionId} to ${resolved.provider}/${resolved.model}`
           + (resolved.reasoningEffort === undefined ? '' : ` (${resolved.reasoningEffort})`),
         )
-        return Response.json({ ok: true, childSessionId, selected: resolved, allowed })
+        return Response.json({ ok: true, childSessionId, selected: resolved, queued: false })
       },
     }), 'subagent-catalog: route override')
   })
