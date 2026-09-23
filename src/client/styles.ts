@@ -35,7 +35,13 @@ const STYLES = [
   '.' + CLS + '-triggerText{font-size:12px;line-height:18px;white-space:nowrap}',
 
   // Panel: the shared menu surface, elevation, and portal layer.
-  '.' + CLS + '-menu{box-sizing:border-box;position:fixed;z-index:1100;width:min(' + MENU_WIDTH + 'px,calc(100vw - 32px));max-height:min(76vh,620px);overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px;border:0;border-radius:20px;background:var(--dsw-specific-menu);box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+  // The shared menu recipe, copied in full. The fill is translucent BY DESIGN
+  // (0.5-0.58 alpha over the platform's own hue), and the blur is what makes it
+  // readable: base.css only substitutes near-opaque fills on macOS desktop,
+  // because a transparent window composites backdrop-filter against nothing
+  // there. Dropping the blur on web leaves a washed-out panel, which is exactly
+  // what happened before this line existed.
+  '.' + CLS + '-menu{box-sizing:border-box;position:fixed;z-index:1100;width:min(' + MENU_WIDTH + 'px,calc(100vw - 32px));max-height:min(76vh,620px);overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px;border:0;border-radius:20px;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
 
   // Panel head: the group title and the same count the trigger announces.
   '.' + CLS + '-panelHead{display:flex;align-items:baseline;gap:8px;padding:6px 10px 2px}',
@@ -95,28 +101,23 @@ const STYLES = [
   '.' + CLS + '-metricLabel{margin:0;font-size:10px;line-height:14px;color:var(--dsw-alias-label-caption);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.' + CLS + '-metricValue{margin:0;font-size:12px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 
-  // Route editor: a footer control that stays closed until asked for, because a
-  // card is one open-target button and an edit affordance inside it would be
-  // both invalid markup and an accidental write.
-  '.' + CLS + '-editorBar{display:flex;padding:2px 4px 4px}',
-  '.' + CLS + '-editorOpen{font:inherit;font-size:12px;line-height:18px;padding:3px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}',
-  '.' + CLS + '-editorOpen:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-  '.' + CLS + '-editorOpen:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}',
-  '.' + CLS + '-editor{display:flex;flex-direction:column;gap:6px;margin:2px 4px 4px;padding:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px}',
-  '.' + CLS + '-editorHead{display:flex;align-items:baseline;gap:8px}',
-  '.' + CLS + '-editorTitle{flex:1;font-size:12px;line-height:18px;font-weight:600;color:var(--dsw-alias-label-secondary)}',
-  '.' + CLS + '-editorClose{font:inherit;font-size:11px;line-height:16px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}',
-  '.' + CLS + '-editorField{display:flex;flex-direction:column;gap:3px}',
-  '.' + CLS + '-editorLabel{font-size:11px;line-height:16px;color:var(--dsw-alias-label-caption)}',
-  '.' + CLS + '-editorSelect{font:inherit;font-size:12px;line-height:18px;box-sizing:border-box;width:100%;padding:4px 6px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}',
-  '.' + CLS + '-editorSelect:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}',
-  '.' + CLS + '-editorPreview{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
-  '.' + CLS + '-editorNote{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}',
-  '.' + CLS + '-editorError{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary)}',
-  '.' + CLS + '-editorOk{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-success-primary)}',
-  '.' + CLS + '-editorApply{font:inherit;font-size:12px;line-height:18px;align-self:flex-start;padding:4px 12px;border:1px solid transparent;border-radius:8px;background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);cursor:pointer}',
-  '.' + CLS + '-editorApply:disabled{cursor:default;opacity:.5}',
-  '.' + CLS + '-editorApply:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}',
+  // Route entries: the model and effort readings ARE the controls. They are
+  // chips so the card's visual language is unchanged, and each opens its own
+  // inline list of what the session's policy actually authorizes.
+  '.' + CLS + '-entry{position:relative;display:inline-flex;min-width:0}',
+  '.' + CLS + '-entryButton{font:inherit;font-size:11px;line-height:16px;max-width:100%;box-sizing:border-box;padding:1px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.' + CLS + '-entryButton:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+  '.' + CLS + '-entryButton:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}',
+  // The list floats above the neighbouring cards; the panel already scrolls, so
+  // the list is positioned rather than flowed to avoid reflowing every metric.
+  '.' + CLS + '-picker{position:absolute;z-index:2;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:2px;min-width:190px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',
+  '.' + CLS + '-pickerOption{font:inherit;font-size:11px;line-height:16px;text-align:left;padding:3px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}',
+  '.' + CLS + '-pickerOption:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+  '.' + CLS + '-pickerOption:disabled{cursor:default;opacity:.5}',
+  '.' + CLS + '-pickerOption[data-current=true]{color:var(--dsw-alias-state-business-primary);font-weight:600}',
+  '.' + CLS + '-pickerNote{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);white-space:normal}',
+  '.' + CLS + '-pickerError{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary);white-space:normal}',
+  '.' + CLS + '-pickerOk{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-success-primary);white-space:normal}',
 ].join('')
 
 /**

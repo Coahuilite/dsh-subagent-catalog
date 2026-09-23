@@ -27,7 +27,7 @@ import {
   buildSubagentRows, contextLevel, rowAriaSummary, rowBarSegments, rowBreakdownParts, rowContextText,
   rowMetrics, rowModelParts, type SubagentRow,
 } from './rows.ts'
-import { RetargetEditor } from './RetargetEditor.tsx'
+import { EffortEntry, ModelEntry } from './RouteEntries.tsx'
 import { CLS, MAX_INDENT_DEPTH, MENU_WIDTH } from './styles.ts'
 
 /** One subagent the control opens: the durable direct-parent address. */
@@ -93,14 +93,23 @@ function SubagentCard({ row, t, now, onOpen }: SubagentCardProps) {
   const segments = rowBarSegments(row, percent)
 
   return (
-    <button
-      type="button"
+    // A row rather than a button: the model and effort entries below are real
+    // controls, and interactive content inside a button is invalid. The row
+    // itself stays the open-target, so clicking anywhere else still opens the
+    // child, and each entry stops propagation so a pick never also navigates.
+    <div
       role="menuitem"
+      tabIndex={0}
       className={CLS + '-card'}
       data-running={String(row.running)}
       data-depth={String(Math.min(row.depth, MAX_INDENT_DEPTH))}
       aria-label={rowAriaSummary(row, t, now)}
       onClick={() => { onOpen(row) }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return
+        event.preventDefault()
+        onOpen(row)
+      }}
     >
       <span className={CLS + '-head'}>
         <StateDot state={row.running ? 'ongoing' : 'idle'} size={DOT_SIZE} />
@@ -113,8 +122,8 @@ function SubagentCard({ row, t, now, onOpen }: SubagentCardProps) {
         {parts.known
           ? (
             <>
-              <Tag tone={parts.pending === undefined ? 'info' : 'warning'}>{parts.model}</Tag>
-              <Tag tone="neutral">{parts.reasoning}</Tag>
+              <ModelEntry row={row} t={t} />
+              <EffortEntry row={row} t={t} />
               {parts.pending !== undefined && <Tag tone="warning">{parts.pending}</Tag>}
             </>
           )
@@ -166,7 +175,7 @@ function SubagentCard({ row, t, now, onOpen }: SubagentCardProps) {
           </span>
         ))}
       </span>
-    </button>
+    </div>
   )
 }
 
@@ -288,7 +297,6 @@ export function SubagentCatalogAction({
           {rows.map(row => (
             <SubagentCard key={row.id} row={row} t={t} now={now} onOpen={openRow} />
           ))}
-          <RetargetEditor rows={rows} parentSessionId={String(sessionId)} t={t} />
         </div>,
         document.body,
       )}
