@@ -43,7 +43,9 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(installStyles, 'subagent-catalog: stylesheet')
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions',
-    id: NS,
+    // Distinct from the official ui-subagent seat (`id: 'subagent-catalog'`).
+    // Duplicate list ids throw and mark the later plugin failed at web boot.
+    id: 'dsh-subagent-catalog',
     // After the header's own actions, before Session utilities.
     order: 20,
     locale: NS,
