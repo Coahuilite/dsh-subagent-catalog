@@ -21,6 +21,7 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { MenuSurface } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SubagentRow } from './rows.ts'
 import { NS } from './locales.ts'
@@ -120,9 +121,24 @@ function useRouteEntry(row: SubagentRow) {
   return { open, setOpen, current, apply, cancel }
 }
 
-/** The inline list shell. */
+/**
+ * The inline list shell: the shared menu material, placed by this plugin.
+ *
+ * Placement stays inline because the shared surface is `position: relative`, so a
+ * stylesheet class of equal specificity would depend on injection order to win.
+ * @param props - the list's rows.
+ * @returns the positioned surface.
+ */
 function PickerList({ children }: { children: ReactNode }) {
-  return <span className={CLS + '-picker'}>{children}</span>
+  return (
+    <MenuSurface
+      compact
+      className={CLS + '-picker'}
+      style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0 }}
+    >
+      {children}
+    </MenuSurface>
+  )
 }
 
 /**

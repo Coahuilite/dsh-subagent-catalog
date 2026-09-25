@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
+import { MenuSurface, StateDot, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime, TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -287,7 +287,20 @@ export function SubagentCatalogAction({
         <span className={CLS + '-triggerText'}>{summary}</span>
       </button>
       {open && position !== undefined && createPortal(
-        <div ref={menuRef} className={CLS + '-menu'} role="menu" aria-label={t('menu.aria')} style={position}>
+        // The shared menu material owns the translucent fill, its blur layer, the
+        // menu radius, and the macOS backing that lets Chromium blur a transparent
+        // window. Painting a background here would double the fill, and blurring
+        // this element directly would add a backdrop root plus a fixed-position
+        // containing block for everything nested inside it - which is exactly what
+        // the shared surface exists to avoid. Placement is inline so no stylesheet
+        // order can win over it.
+        <MenuSurface
+          ref={menuRef}
+          className={CLS + '-menu'}
+          role="menu"
+          aria-label={t('menu.aria')}
+          style={{ ...position, position: 'fixed' }}
+        >
           {/* The menu's accessible name already states the group, and the trigger
               announces the count, so the head is decoration inside role=menu. */}
           <div className={CLS + '-panelHead'} aria-hidden="true">
@@ -297,7 +310,7 @@ export function SubagentCatalogAction({
           {rows.map(row => (
             <SubagentCard key={row.id} row={row} t={t} now={now} onOpen={openRow} />
           ))}
-        </div>,
+        </MenuSurface>,
         document.body,
       )}
     </>

@@ -5,13 +5,13 @@ export const NS = 'subagent-catalog'
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
-  'button.aria': '子代理会话，{count}',
-  'menu.aria': '子代理会话',
-  'panel.title': '子代理会话',
-  'count.total.one': '{count} 个子代理',
-  'count.total.other': '{count} 个子代理',
-  'count.running.one': '{count} 个子代理，正在运行',
-  'count.running.other': '{count} 个子代理，正在运行',
+  'button.aria': '子智能体会话，{count}',
+  'menu.aria': '子智能体会话',
+  'panel.title': '子智能体会话',
+  'count.total.one': '{count} 个子智能体',
+  'count.total.other': '{count} 个子智能体',
+  'count.running.one': '{count} 个子智能体，正在运行',
+  'count.running.other': '{count} 个子智能体，正在运行',
   'mode.oneShot': '一次性',
   'mode.continuable': '可继续',
   'activity.running': '正在运行',
@@ -52,16 +52,16 @@ export const zh = {
   'pick.model': '改模型',
   'pick.effort': '改思考强度',
   'pick.none': '该模型没有可调思考强度',
-  'pick.queued': '已排队：该子代理下次活动时生效',
+  'pick.queued': '已排队：该子智能体下次活动时生效',
   'pick.cancel': '取消排队',
-  'pick.terminal': '该子代理是一次性任务且已结束，没有下一轮可改',
-  'pick.willApply': '改动将作用于该子代理的下一轮请求',
-  'pick.willQueue': '该子代理当前未运行；改动会排队，在其下次活动时生效',
+  'pick.terminal': '该子智能体是一次性任务且已结束，没有下一轮可改',
+  'pick.willApply': '改动将作用于该子智能体的下一轮请求',
+  'pick.willQueue': '该子智能体当前未运行；改动会排队，在其下次活动时生效',
   'pick.notDurable': '宿主未启用存储域，重启会丢掉这条排队',
   'edit.effort.default': '默认',
   'edit.loading': '读取中…',
-  'edit.applied': '已提交；该子代理下一轮生效',
-  'edit.noPolicy': '本会话未授权子代理选择模型。该设置只影响新会话，请在 Subagent 设置里开启后新建会话。',
+  'edit.applied': '已提交；该子智能体下一轮生效',
+  'edit.noPolicy': '本会话未授权子智能体选择模型。该设置只影响新会话，请在 Subagent 设置里开启后新建会话。',
 } as const
 
 /** English dictionary, key-identical to the Chinese source of truth. */

@@ -35,13 +35,12 @@ const STYLES = [
   '.' + CLS + '-triggerText{font-size:12px;line-height:18px;white-space:nowrap}',
 
   // Panel: the shared menu surface, elevation, and portal layer.
-  // The shared menu recipe, copied in full. The fill is translucent BY DESIGN
-  // (0.5-0.58 alpha over the platform's own hue), and the blur is what makes it
-  // readable: base.css only substitutes near-opaque fills on macOS desktop,
-  // because a transparent window composites backdrop-filter against nothing
-  // there. Dropping the blur on web leaves a washed-out panel, which is exactly
-  // what happened before this line existed.
-  '.' + CLS + '-menu{box-sizing:border-box;position:fixed;z-index:1100;width:min(' + MENU_WIDTH + 'px,calc(100vw - 32px));max-height:min(76vh,620px);overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px;border:0;border-radius:20px;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+  // Layout and elevation only. The fill, its blur layer, the menu radius, and the
+  // macOS backing all come from the shared `MenuSurface` this panel renders: the
+  // fill is translucent BY DESIGN, the blur is what makes it readable, and the
+  // shared surface applies the blur to a dedicated layer so this element does not
+  // become a backdrop root or a fixed-position containing block for its content.
+  '.' + CLS + '-menu{box-sizing:border-box;z-index:1100;width:min(' + MENU_WIDTH + 'px,calc(100vw - 32px));max-height:min(76vh,620px);overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px;box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
 
   // Panel head: the group title and the same count the trigger announces.
   '.' + CLS + '-panelHead{display:flex;align-items:baseline;gap:8px;padding:6px 10px 2px}',
@@ -113,7 +112,9 @@ const STYLES = [
   '.' + CLS + '-entryButton[data-queued=true]{border-style:dashed;border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-label-primary)}',
   // The list floats above the neighbouring cards; the panel already scrolls, so
   // the list is positioned rather than flowed to avoid reflowing every metric.
-  '.' + CLS + '-picker{position:absolute;z-index:2;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;gap:2px;min-width:190px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',
+  // Placement is inline (the shared surface is `position: relative`), and the same
+  // division of labour as the panel holds: the surface owns fill, blur, and radius.
+  '.' + CLS + '-picker{z-index:2;display:flex;flex-direction:column;gap:2px;min-width:190px;padding:4px;box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1)}',
   '.' + CLS + '-pickerOption{font:inherit;font-size:11px;line-height:16px;text-align:left;padding:3px 8px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap}',
   '.' + CLS + '-pickerOption:hover{background:var(--dsw-alias-interactive-bg-hover)}',
   '.' + CLS + '-pickerOption:disabled{cursor:default;opacity:.5}',
