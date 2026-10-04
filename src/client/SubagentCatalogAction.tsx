@@ -301,15 +301,23 @@ export function SubagentCatalogAction({
           aria-label={t('menu.aria')}
           style={{ ...position, position: 'fixed' }}
         >
-          {/* The menu's accessible name already states the group, and the trigger
-              announces the count, so the head is decoration inside role=menu. */}
-          <div className={CLS + '-panelHead'} aria-hidden="true">
-            <span className={CLS + '-panelTitle'}>{t('panel.title')}</span>
-            <span className={CLS + '-panelCount'}>{summary}</span>
+          {/* The surface holds the material layer, which is absolutely positioned
+              with `inset: 0`; a scroll container's absolutely positioned children
+              scroll away with its content, so if this surface scrolled, the fill
+              would cover only the first screenful and everything past it would show
+              through. The shared surface therefore stays the clip and this inner
+              viewport does the scrolling, exactly as the shipped menus do. */}
+          <div className={CLS + '-menuViewport'}>
+            {/* The menu's accessible name already states the group, and the trigger
+                announces the count, so the head is decoration inside role=menu. */}
+            <div className={CLS + '-panelHead'} aria-hidden="true">
+              <span className={CLS + '-panelTitle'}>{t('panel.title')}</span>
+              <span className={CLS + '-panelCount'}>{summary}</span>
+            </div>
+            {rows.map(row => (
+              <SubagentCard key={row.id} row={row} t={t} now={now} onOpen={openRow} />
+            ))}
           </div>
-          {rows.map(row => (
-            <SubagentCard key={row.id} row={row} t={t} now={now} onOpen={openRow} />
-          ))}
         </MenuSurface>,
         document.body,
       )}

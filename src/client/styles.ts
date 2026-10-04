@@ -40,7 +40,15 @@ const STYLES = [
   // fill is translucent BY DESIGN, the blur is what makes it readable, and the
   // shared surface applies the blur to a dedicated layer so this element does not
   // become a backdrop root or a fixed-position containing block for its content.
-  '.' + CLS + '-menu{box-sizing:border-box;z-index:1100;width:min(' + MENU_WIDTH + 'px,calc(100vw - 32px));max-height:min(76vh,620px);overflow:auto;display:flex;flex-direction:column;gap:6px;padding:6px;box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+  // `overflow: hidden`, never `auto`: the material layer is absolutely positioned
+  // with `inset: 0`, and a scroll container's absolutely positioned children scroll
+  // away with its content. Letting this surface scroll would leave the fill covering
+  // only the first screenful and expose everything past it. The shipped menus make
+  // the same split - `.scrollable` clips, `.viewport` scrolls.
+  '.' + CLS + '-menu{box-sizing:border-box;z-index:1100;width:min(' + MENU_WIDTH + 'px,calc(100vw - 32px));max-height:min(76vh,620px);overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--dsw-elevation-prominent);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2)}',
+  // `min-height: 0` lets this flex child shrink below its content so the overflow
+  // actually scrolls instead of stretching the surface past its max-height.
+  '.' + CLS + '-menuViewport{display:flex;flex-direction:column;gap:6px;padding:6px;min-height:0;overflow-y:auto}',
 
   // Panel head: the group title and the same count the trigger announces.
   '.' + CLS + '-panelHead{display:flex;align-items:baseline;gap:8px;padding:6px 10px 2px}',
